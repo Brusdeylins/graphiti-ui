@@ -203,7 +203,8 @@ class FalkorDBClient:
             RETURN s.uuid as source_uuid, t.uuid as target_uuid,
                    type(r) as rel_type, r.uuid as uuid, r.name as name,
                    r.fact as fact, r.created_at as created_at,
-                   r.valid_at as valid_at, r.expired_at as expired_at
+                   r.valid_at as valid_at, r.expired_at as expired_at,
+                   r.episodes as episodes
             LIMIT {limit}
             """
             result = graph.query(query)
@@ -220,6 +221,7 @@ class FalkorDBClient:
                     "created_at": record[6] if len(record) > 6 else "",
                     "valid_at": record[7] if len(record) > 7 else None,
                     "expired_at": record[8] if len(record) > 8 else None,
+                    "episodes": record[9] if len(record) > 9 else [],
                 })
             return edges
         except Exception as e:
@@ -292,6 +294,58 @@ class FalkorDBClient:
         except Exception as e:
             print(f"Error deleting graph {graph_name}: {e}")
             return False
+
+    def get_episode_by_uuid(self, episode_uuid: str, group_id: str | None = None) -> dict | None:
+        """Get an episode node by UUID.
+
+        Args:
+            episode_uuid: UUID of the episode to fetch
+            group_id: Optional graph name to search in. If None, searches all graphs.
+        """
+        if group_id:
+            return self._get_episode_from_graph(episode_uuid, group_id)
+        else:
+            # Search all graphs
+            for gid in self.get_group_ids():
+                result = self._get_episode_from_graph(episode_uuid, gid)
+                if result:
+                    return result
+            return None
+
+    def _get_episode_from_graph(self, episode_uuid: str, graph_name: str) -> dict | None:
+        """Get an episode from a specific graph."""
+        try:
+            params = self._get_connection_params()
+            client = FalkorDB(
+                host=params["host"],
+                port=params["port"],
+                password=params["password"],
+            )
+            graph = client.select_graph(graph_name)
+            query = f"""
+            MATCH (e:Episodic {{uuid: '{episode_uuid}'}})
+            RETURN e.uuid as uuid, e.name as name, e.content as content,
+                   e.source as source, e.source_description as source_description,
+                   e.valid_at as valid_at, e.created_at as created_at
+            LIMIT 1
+            """
+            result = graph.query(query)
+            if result.result_set:
+                record = result.result_set[0]
+                return {
+                    "uuid": record[0] if len(record) > 0 else "",
+                    "name": record[1] if len(record) > 1 else "",
+                    "content": record[2] if len(record) > 2 else "",
+                    "source": record[3] if len(record) > 3 else "",
+                    "source_description": record[4] if len(record) > 4 else "",
+                    "valid_at": record[5] if len(record) > 5 else None,
+                    "created_at": record[6] if len(record) > 6 else "",
+                    "group_id": graph_name,
+                }
+            return None
+        except Exception as e:
+            print(f"Error getting episode {episode_uuid} from graph {graph_name}: {e}")
+            return None
 
     def get_group_ids(self) -> list[str]:
         """Get all unique group IDs (graph names) in FalkorDB.

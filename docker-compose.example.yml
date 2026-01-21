@@ -79,7 +79,7 @@ services:
       # API Endpoints
       - GRAPHITI_MCP_URL=http://graphiti-mcp:8000
       - GRAPHITI_MCP_CONTAINER=dev-graphiti-mcp
-      - FALKORDB_BROWSER_URL=http://localhost:3000
+      - FALKORDB_BROWSER_URL=${FALKORDB_BROWSER_URL:-http://localhost:3000}
       # FalkorDB Connection
       - FALKORDB_HOST=falkordb
       - FALKORDB_PORT=6379

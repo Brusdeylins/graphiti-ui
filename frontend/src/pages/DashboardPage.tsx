@@ -31,17 +31,20 @@ interface EmbedderStatus {
 export function DashboardPage() {
   const [llmStatus, setLlmStatus] = useState<LLMStatus | null>(null);
   const [embedderStatus, setEmbedderStatus] = useState<EmbedderStatus | null>(null);
+  const [falkordbBrowserUrl, setFalkordbBrowserUrl] = useState<string>('');
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     const fetchStatus = async () => {
       try {
-        const [llmRes, embedderRes] = await Promise.all([
+        const [llmRes, embedderRes, statusRes] = await Promise.all([
           api.get('/config/llm/status').catch(() => ({ data: { api_url: '', model: '', reachable: false, error: 'Failed to fetch' } })),
           api.get('/config/embedder/status').catch(() => ({ data: { api_url: '', model: '', dimensions: 768, reachable: false, error: 'Failed to fetch' } })),
+          api.get('/dashboard/status').catch(() => ({ data: { falkordb: { browser_url: '' } } })),
         ]);
         setLlmStatus(llmRes.data);
         setEmbedderStatus(embedderRes.data);
+        setFalkordbBrowserUrl(statusRes.data?.falkordb?.browser_url || '');
       } catch (error) {
         console.error('Failed to fetch status:', error);
       } finally {
@@ -178,19 +181,21 @@ export function DashboardPage() {
       <h3 className="mb-3">External Tools</h3>
       <div className="card">
         <div className="list-group list-group-flush">
-          <a
-            href="http://localhost:3000"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="list-group-item list-group-item-action d-flex align-items-center"
-          >
-            <IconDatabase size={20} className="me-3 text-secondary" />
-            <div>
-              <strong>FalkorDB Browser</strong>
-              <div className="text-secondary small">Graph visualization & Cypher queries</div>
-            </div>
-            <IconExternalLink size={16} className="ms-auto text-secondary" />
-          </a>
+          {falkordbBrowserUrl && (
+            <a
+              href={falkordbBrowserUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="list-group-item list-group-item-action d-flex align-items-center"
+            >
+              <IconDatabase size={20} className="me-3 text-secondary" />
+              <div>
+                <strong>FalkorDB Browser</strong>
+                <div className="text-secondary small">Graph visualization & Cypher queries</div>
+              </div>
+              <IconExternalLink size={16} className="ms-auto text-secondary" />
+            </a>
+          )}
           <a
             href="/api/docs"
             target="_blank"
@@ -212,8 +217,21 @@ export function DashboardPage() {
           >
             <IconBrandGithub size={20} className="me-3 text-secondary" />
             <div>
-              <strong>Graphiti GitHub</strong>
-              <div className="text-secondary small">Documentation</div>
+              <strong>Graphiti</strong>
+              <div className="text-secondary small">Knowledge graph library</div>
+            </div>
+            <IconExternalLink size={16} className="ms-auto text-secondary" />
+          </a>
+          <a
+            href="https://github.com/getzep/zep-graph-visualization"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="list-group-item list-group-item-action d-flex align-items-center"
+          >
+            <IconBrandGithub size={20} className="me-3 text-secondary" />
+            <div>
+              <strong>Zep Graph Visualization</strong>
+              <div className="text-secondary small">Reference implementation for graph visualization</div>
             </div>
             <IconExternalLink size={16} className="ms-auto text-secondary" />
           </a>

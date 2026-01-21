@@ -63,14 +63,21 @@ async def get_graph_data(
         ]
 
         # Transform edges to frontend expected format
-        # Backend: source_node_uuid, target_node_uuid, type, fact
-        # Frontend expects: source, target, type, fact
+        # Backend: source_node_uuid, target_node_uuid, type, name, fact, uuid, created_at, valid_at, expired_at
+        # Frontend expects: source, target, type, fact, plus metadata
+        # Note: Graphiti stores actual relationship name in 'name' field,
+        # while type(r) is always 'RELATES_TO'
         transformed_edges = [
             {
                 "source": edge.get("source_node_uuid", ""),
                 "target": edge.get("target_node_uuid", ""),
-                "type": edge.get("type", "RELATES_TO"),
+                "type": edge.get("name") or edge.get("type", "RELATES_TO"),
                 "fact": edge.get("fact", ""),
+                "uuid": edge.get("uuid", ""),
+                "created_at": edge.get("created_at", ""),
+                "valid_at": edge.get("valid_at"),
+                "expired_at": edge.get("expired_at"),
+                "episodes": edge.get("episodes", []),
             }
             for edge in data["edges"]
         ]
@@ -219,6 +226,25 @@ async def delete_graph(group_id: str, current_user: CurrentUser) -> dict:
                 "success": False,
                 "error": f"Failed to delete graph '{group_id}'",
             }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@router.get("/episode/{uuid}")
+async def get_episode_details(uuid: str, current_user: CurrentUser) -> dict:
+    """Get detailed information about a specific episode."""
+    try:
+        client = get_falkordb_client()
+        episode = client.get_episode_by_uuid(uuid)
+
+        if episode:
+            return {
+                "success": True,
+                "episode": episode,
+            }
+
+        return {"success": False, "error": "Episode not found"}
+
     except Exception as e:
         return {"success": False, "error": str(e)}
 

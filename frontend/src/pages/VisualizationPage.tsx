@@ -25,6 +25,11 @@ interface Edge {
   target: string | Node;
   type: string;
   fact?: string;
+  uuid?: string;
+  created_at?: string;
+  valid_at?: string | null;
+  expired_at?: string | null;
+  episodes?: string[];
   // For curved edges - index among edges between same nodes
   linkIndex?: number;
   linkCount?: number;
@@ -36,6 +41,17 @@ interface GraphData {
   edges: Edge[];
 }
 
+interface Episode {
+  uuid: string;
+  name: string;
+  content: string;
+  source: string;
+  source_description: string;
+  valid_at: string | null;
+  created_at: string;
+  group_id: string;
+}
+
 // Color palette for entity types
 const colorPalette = [
   '#206bc4', '#2fb344', '#f76707', '#d63939', '#ae3ec9',
@@ -45,6 +61,16 @@ const colorPalette = [
 
 const defaultColor = '#667382';
 const highlightColor = '#206bc4';
+
+// Format edge type from UPPER_SNAKE_CASE to Title Case
+function formatEdgeType(type: string): string {
+  if (!type) return '';
+  return type
+    .toLowerCase()
+    .split('_')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
 
 export function VisualizationPage() {
   const svgRef = useRef<SVGSVGElement>(null);
@@ -61,6 +87,12 @@ export function VisualizationPage() {
   const [groups, setGroups] = useState<string[]>([]);
   const [selectedGroup, setSelectedGroup] = useState<string>('');
   const [isDeleting, setIsDeleting] = useState(false);
+  const [panelWidth, setPanelWidth] = useState(420);
+  const [loadedEpisodes, setLoadedEpisodes] = useState<Record<string, Episode>>({});
+  const [loadingEpisodes, setLoadingEpisodes] = useState<Set<string>>(new Set());
+  const [expandedEpisode, setExpandedEpisode] = useState<string | null>(null);
+  const isResizingRef = useRef(false);
+  const processedEdgesRef = useRef<Edge[]>([]);
 
   // Refs for D3 selections to update highlighting without re-running simulation
   const nodeSelectionRef = useRef<d3.Selection<SVGGElement, Node, SVGGElement, unknown> | null>(null);
@@ -138,17 +170,51 @@ export function VisualizationPage() {
     setHighlightedEdges(connectedEdgeIndices);
   }, []);
 
+  // Load episode content in background (no UI toggle)
+  const loadEpisodeBackground = useCallback(async (episodeUuid: string) => {
+    if (loadedEpisodes[episodeUuid] || loadingEpisodes.has(episodeUuid)) return;
+
+    setLoadingEpisodes(prev => new Set(prev).add(episodeUuid));
+    try {
+      const response = await api.get(`/graph/episode/${episodeUuid}`);
+      if (response.data.success && response.data.episode) {
+        setLoadedEpisodes(prev => ({
+          ...prev,
+          [episodeUuid]: response.data.episode,
+        }));
+      }
+    } catch (err) {
+      console.error('Failed to load episode:', err);
+    } finally {
+      setLoadingEpisodes(prev => {
+        const next = new Set(prev);
+        next.delete(episodeUuid);
+        return next;
+      });
+    }
+  }, [loadedEpisodes, loadingEpisodes]);
+
   // Handle edge click - highlight source and target nodes
   const handleEdgeClick = useCallback((edge: Edge, edgeIndex: number) => {
     setSelectedEdge(edge);
     setSelectedNode(null);
+    setExpandedEpisode(null); // Reset expanded episode when selecting new edge
 
     const sourceId = typeof edge.source === 'string' ? edge.source : edge.source.id;
     const targetId = typeof edge.target === 'string' ? edge.target : edge.target.id;
 
     setHighlightedNodes(new Set([sourceId, targetId]));
     setHighlightedEdges(new Set([edgeIndex]));
-  }, []);
+
+    // Pre-load episodes for this edge
+    if (edge.episodes && edge.episodes.length > 0) {
+      edge.episodes.forEach(episodeId => {
+        if (!loadedEpisodes[episodeId]) {
+          loadEpisodeBackground(episodeId);
+        }
+      });
+    }
+  }, [loadedEpisodes, loadEpisodeBackground]);
 
   // Clear selection
   const clearSelection = useCallback(() => {
@@ -157,6 +223,123 @@ export function VisualizationPage() {
     setHighlightedNodes(new Set());
     setHighlightedEdges(new Set());
   }, []);
+
+  // Navigate to a node from sidebar
+  const navigateToNode = useCallback((node: Node) => {
+    setSelectedNode(node);
+    setSelectedEdge(null);
+
+    const edges = processedEdgesRef.current;
+    const connectedNodes = new Set<string>([node.id]);
+    const connectedEdgeIndices = new Set<number>();
+
+    edges.forEach((edge) => {
+      const sourceId = typeof edge.source === 'string' ? edge.source : (edge.source as Node).id;
+      const targetId = typeof edge.target === 'string' ? edge.target : (edge.target as Node).id;
+
+      if (sourceId === node.id || targetId === node.id) {
+        connectedNodes.add(sourceId);
+        connectedNodes.add(targetId);
+        if (edge.originalIndex !== undefined) {
+          connectedEdgeIndices.add(edge.originalIndex);
+        }
+      }
+    });
+
+    setHighlightedNodes(connectedNodes);
+    setHighlightedEdges(connectedEdgeIndices);
+  }, []);
+
+  // Navigate to an edge from sidebar
+  const navigateToEdge = useCallback((edge: Edge) => {
+    setSelectedEdge(edge);
+    setSelectedNode(null);
+    setExpandedEpisode(null); // Reset expanded episode when navigating to new edge
+
+    const sourceId = typeof edge.source === 'string' ? edge.source : (edge.source as Node).id;
+    const targetId = typeof edge.target === 'string' ? edge.target : (edge.target as Node).id;
+
+    setHighlightedNodes(new Set([sourceId, targetId]));
+    if (edge.originalIndex !== undefined) {
+      setHighlightedEdges(new Set([edge.originalIndex]));
+    }
+
+    // Pre-load episodes for this edge
+    if (edge.episodes && edge.episodes.length > 0) {
+      edge.episodes.forEach(episodeId => {
+        if (!loadedEpisodes[episodeId]) {
+          loadEpisodeBackground(episodeId);
+        }
+      });
+    }
+  }, [loadedEpisodes, loadEpisodeBackground]);
+
+  // Get connected edges for a node
+  const getConnectedEdges = useCallback((node: Node): Edge[] => {
+    return processedEdgesRef.current.filter(edge => {
+      const sourceId = typeof edge.source === 'string' ? edge.source : (edge.source as Node).id;
+      const targetId = typeof edge.target === 'string' ? edge.target : (edge.target as Node).id;
+      return sourceId === node.id || targetId === node.id;
+    });
+  }, []);
+
+  // Load episode content on demand (with UI toggle)
+  const loadEpisode = useCallback(async (episodeUuid: string) => {
+    // Already loaded - just toggle
+    if (loadedEpisodes[episodeUuid]) {
+      setExpandedEpisode(expandedEpisode === episodeUuid ? null : episodeUuid);
+      return;
+    }
+
+    // Currently loading - toggle when done
+    if (loadingEpisodes.has(episodeUuid)) {
+      return;
+    }
+
+    setLoadingEpisodes(prev => new Set(prev).add(episodeUuid));
+    try {
+      const response = await api.get(`/graph/episode/${episodeUuid}`);
+      if (response.data.success && response.data.episode) {
+        setLoadedEpisodes(prev => ({
+          ...prev,
+          [episodeUuid]: response.data.episode,
+        }));
+        setExpandedEpisode(episodeUuid);
+      }
+    } catch (err) {
+      console.error('Failed to load episode:', err);
+    } finally {
+      setLoadingEpisodes(prev => {
+        const next = new Set(prev);
+        next.delete(episodeUuid);
+        return next;
+      });
+    }
+  }, [loadedEpisodes, loadingEpisodes, expandedEpisode]);
+
+  // Panel resize handlers
+  const handleResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isResizingRef.current = true;
+    const startX = e.clientX;
+    const startWidth = panelWidth;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isResizingRef.current) return;
+      const delta = startX - e.clientX;
+      const newWidth = Math.max(300, Math.min(800, startWidth + delta));
+      setPanelWidth(newWidth);
+    };
+
+    const handleMouseUp = () => {
+      isResizingRef.current = false;
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  }, [panelWidth]);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -246,6 +429,9 @@ export function VisualizationPage() {
       const key = [sourceId, targetId].sort().join('-');
       edge.linkCount = linkCounts[key];
     });
+
+    // Store for sidebar navigation
+    processedEdgesRef.current = processedEdges;
 
     // Create simulation with improved physics
     const simulation = d3.forceSimulation(graphData.nodes as d3.SimulationNodeDatum[])
@@ -669,7 +855,21 @@ export function VisualizationPage() {
 
         {/* Node details */}
         {selectedNode && (
-          <div className="card position-absolute" style={{ top: '1rem', right: '1rem', width: '380px', maxHeight: 'calc(100% - 2rem)', overflowY: 'auto' }}>
+          <div className="card position-absolute" style={{ top: '1rem', right: '1rem', width: `${panelWidth}px`, maxHeight: 'calc(100% - 2rem)', display: 'flex', flexDirection: 'column' }}>
+            {/* Resize handle */}
+            <div
+              onMouseDown={handleResizeStart}
+              style={{
+                position: 'absolute',
+                left: 0,
+                top: 0,
+                bottom: 0,
+                width: '6px',
+                cursor: 'ew-resize',
+                background: 'transparent',
+              }}
+              title="Drag to resize"
+            />
             <div className="card-header d-flex align-items-center">
               <h4 className="card-title mb-0">Node Details</h4>
               <button
@@ -677,17 +877,17 @@ export function VisualizationPage() {
                 onClick={clearSelection}
               />
             </div>
-            <div className="card-body">
-              <h3 className="mb-2">{selectedNode.name || 'Unknown'}</h3>
-              <div className="mb-3">
+            <div className="card-body" style={{ overflowY: 'auto', flex: 1 }}>
+              <h3 className="mb-2" style={{ wordBreak: 'break-word' }}>{selectedNode.name || 'Unknown'}</h3>
+              <div className="mb-3 d-flex flex-wrap gap-1">
                 <span
-                  className="badge me-1"
+                  className="badge"
                   style={{ backgroundColor: getTypeColor(selectedNode.type), color: 'white' }}
                 >
                   {selectedNode.type}
                 </span>
                 {selectedNode.labels?.filter(l => l !== 'Entity' && l !== selectedNode.type).map(label => (
-                  <span key={label} className="badge bg-secondary me-1">{label}</span>
+                  <span key={label} className="badge bg-secondary text-white">{label}</span>
                 ))}
               </div>
 
@@ -698,14 +898,22 @@ export function VisualizationPage() {
                 </div>
               )}
 
-              {(selectedNode.group_id || selectedNode.created_at) && (
+              {(selectedNode.id || selectedNode.group_id || selectedNode.created_at) && (
                 <div className="mb-3">
                   <label className="form-label text-muted small mb-1">Metadata</label>
                   <table className="table table-sm table-borderless mb-0">
                     <tbody>
+                      {selectedNode.id && (
+                        <tr>
+                          <td className="text-muted ps-0" style={{ width: '80px' }}>UUID</td>
+                          <td className="small text-truncate" style={{ maxWidth: '200px' }} title={selectedNode.id}>
+                            <code>{selectedNode.id}</code>
+                          </td>
+                        </tr>
+                      )}
                       {selectedNode.group_id && (
                         <tr>
-                          <td className="text-muted ps-0" style={{ width: '100px' }}>Graph</td>
+                          <td className="text-muted ps-0">Graph</td>
                           <td>{selectedNode.group_id}</td>
                         </tr>
                       )}
@@ -721,7 +929,7 @@ export function VisualizationPage() {
               )}
 
               {selectedNode.attributes && Object.keys(selectedNode.attributes).length > 0 && (
-                <div>
+                <div className="mb-3">
                   <label className="form-label text-muted small mb-1">Attributes</label>
                   <table className="table table-sm table-borderless mb-0">
                     <tbody>
@@ -737,13 +945,81 @@ export function VisualizationPage() {
                   </table>
                 </div>
               )}
+
+              {/* Connected Relationships */}
+              {getConnectedEdges(selectedNode).length > 0 && (
+                <div>
+                  <label className="form-label text-muted small mb-1">
+                    Relationships ({getConnectedEdges(selectedNode).length})
+                  </label>
+                  <div className="d-flex flex-column gap-1">
+                    {getConnectedEdges(selectedNode).map((edge, idx) => {
+                      const source = edge.source as Node;
+                      const target = edge.target as Node;
+                      const isOutgoing = source.id === selectedNode.id;
+                      const otherNode = isOutgoing ? target : source;
+
+                      return (
+                        <div
+                          key={idx}
+                          className="d-flex align-items-center gap-1 py-1 small"
+                          style={{ cursor: 'pointer' }}
+                          onClick={() => navigateToEdge(edge)}
+                        >
+                          {isOutgoing ? (
+                            <>
+                              <span className="text-muted">→</span>
+                              <span className="text-secondary" style={{ fontSize: '0.75rem' }}>{formatEdgeType(edge.type)}</span>
+                              <span className="text-muted">→</span>
+                              <span
+                                className="badge text-white text-truncate"
+                                style={{ backgroundColor: getTypeColor(otherNode.type), maxWidth: '150px', fontSize: '0.7rem' }}
+                                title={otherNode.name}
+                              >
+                                {otherNode.name}
+                              </span>
+                            </>
+                          ) : (
+                            <>
+                              <span
+                                className="badge text-white text-truncate"
+                                style={{ backgroundColor: getTypeColor(otherNode.type), maxWidth: '150px', fontSize: '0.7rem' }}
+                                title={otherNode.name}
+                              >
+                                {otherNode.name}
+                              </span>
+                              <span className="text-muted">→</span>
+                              <span className="text-secondary" style={{ fontSize: '0.75rem' }}>{formatEdgeType(edge.type)}</span>
+                              <span className="text-muted">→</span>
+                            </>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}
 
         {/* Edge details */}
         {selectedEdge && (
-          <div className="card position-absolute" style={{ top: '1rem', right: '1rem', width: '380px', maxHeight: 'calc(100% - 2rem)', overflowY: 'auto' }}>
+          <div className="card position-absolute" style={{ top: '1rem', right: '1rem', width: `${panelWidth}px`, maxHeight: 'calc(100% - 2rem)', display: 'flex', flexDirection: 'column' }}>
+            {/* Resize handle */}
+            <div
+              onMouseDown={handleResizeStart}
+              style={{
+                position: 'absolute',
+                left: 0,
+                top: 0,
+                bottom: 0,
+                width: '6px',
+                cursor: 'ew-resize',
+                background: 'transparent',
+              }}
+              title="Drag to resize"
+            />
             <div className="card-header d-flex align-items-center">
               <h4 className="card-title mb-0">Relationship Details</h4>
               <button
@@ -751,29 +1027,130 @@ export function VisualizationPage() {
                 onClick={clearSelection}
               />
             </div>
-            <div className="card-body">
-              {/* Relationship flow visualization */}
-              <div className="d-flex align-items-center justify-content-center gap-2 mb-3 p-3 bg-light rounded">
-                <span className="badge" style={{ backgroundColor: getTypeColor((selectedEdge.source as Node).type || ''), color: 'white' }}>
+            <div className="card-body" style={{ overflowY: 'auto', flex: 1 }}>
+              {/* Relationship flow visualization - no box */}
+              <div className="d-flex flex-wrap align-items-center justify-content-center gap-2 mb-3">
+                <span
+                  className="badge text-white"
+                  style={{ backgroundColor: getTypeColor((selectedEdge.source as Node).type || ''), flex: '1 1 auto', textAlign: 'center', minWidth: '80px', cursor: 'pointer' }}
+                  onClick={() => navigateToNode(selectedEdge.source as Node)}
+                  title="Click to view node"
+                >
                   {(selectedEdge.source as Node).name || 'Source'}
                 </span>
-                <span className="text-muted">→</span>
-                <span className="badge bg-secondary">{selectedEdge.type}</span>
-                <span className="text-muted">→</span>
-                <span className="badge" style={{ backgroundColor: getTypeColor((selectedEdge.target as Node).type || ''), color: 'white' }}>
+                <span className="text-muted flex-shrink-0">→</span>
+                <span className="text-secondary" style={{ flex: '0 0 auto', textAlign: 'center' }}>{formatEdgeType(selectedEdge.type)}</span>
+                <span className="text-muted flex-shrink-0">→</span>
+                <span
+                  className="badge text-white"
+                  style={{ backgroundColor: getTypeColor((selectedEdge.target as Node).type || ''), flex: '1 1 auto', textAlign: 'center', minWidth: '80px', cursor: 'pointer' }}
+                  onClick={() => navigateToNode(selectedEdge.target as Node)}
+                  title="Click to view node"
+                >
                   {(selectedEdge.target as Node).name || 'Target'}
                 </span>
               </div>
 
               <div className="mb-3">
-                <label className="form-label text-muted small mb-1">Type</label>
-                <p className="mb-0">{selectedEdge.type}</p>
+                <label className="form-label text-muted small mb-1">Relationship Type</label>
+                <p className="mb-0">{formatEdgeType(selectedEdge.type)}</p>
+                <code className="small text-muted">{selectedEdge.type}</code>
               </div>
 
               {selectedEdge.fact && (
                 <div className="mb-3">
                   <label className="form-label text-muted small mb-1">Fact</label>
                   <p className="mb-0 small">{selectedEdge.fact}</p>
+                </div>
+              )}
+
+              {/* Structured Metadata */}
+              <div className="mb-3">
+                <label className="form-label text-muted small mb-1">Metadata</label>
+                <table className="table table-sm table-borderless mb-0">
+                  <tbody>
+                    {selectedEdge.uuid && (
+                      <tr>
+                        <td className="text-muted ps-0" style={{ width: '80px' }}>UUID</td>
+                        <td className="small text-truncate" style={{ maxWidth: '200px' }} title={selectedEdge.uuid}>
+                          <code>{selectedEdge.uuid}</code>
+                        </td>
+                      </tr>
+                    )}
+                    {selectedEdge.created_at && (
+                      <tr>
+                        <td className="text-muted ps-0">Created</td>
+                        <td className="small">{new Date(selectedEdge.created_at).toLocaleString()}</td>
+                      </tr>
+                    )}
+                    {selectedEdge.valid_at && (
+                      <tr>
+                        <td className="text-muted ps-0">Valid At</td>
+                        <td className="small">{new Date(selectedEdge.valid_at).toLocaleString()}</td>
+                      </tr>
+                    )}
+                    {selectedEdge.expired_at && (
+                      <tr>
+                        <td className="text-muted ps-0">Expired</td>
+                        <td className="small text-danger">{new Date(selectedEdge.expired_at).toLocaleString()}</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Episodes */}
+              {selectedEdge.episodes && selectedEdge.episodes.length > 0 && (
+                <div className="mb-3">
+                  <label className="form-label text-muted small mb-1">
+                    Episodes ({selectedEdge.episodes.length})
+                  </label>
+                  <div className="d-flex flex-column gap-2">
+                    {selectedEdge.episodes.map((episodeId, idx) => (
+                      <div key={idx}>
+                        <div
+                          className={`d-flex align-items-center gap-2 ${expandedEpisode === episodeId ? '' : 'cursor-pointer'}`}
+                          style={{ cursor: 'pointer' }}
+                          onClick={() => loadEpisode(episodeId)}
+                        >
+                          {loadingEpisodes.has(episodeId) ? (
+                            <span className="spinner-border spinner-border-sm text-secondary" />
+                          ) : (
+                            <span className="text-muted" style={{ fontSize: '0.7rem' }}>
+                              {expandedEpisode === episodeId ? '▼' : '▶'}
+                            </span>
+                          )}
+                          <span
+                            className={`badge ${expandedEpisode === episodeId ? 'bg-primary text-white' : 'bg-secondary-lt text-secondary'}`}
+                            style={{ fontSize: '0.7rem' }}
+                            title={episodeId}
+                          >
+                            {loadedEpisodes[episodeId]?.name || `${episodeId.substring(0, 8)}...`}
+                          </span>
+                          {loadedEpisodes[episodeId]?.source && (
+                            <span className="text-muted small">{loadedEpisodes[episodeId].source}</span>
+                          )}
+                        </div>
+                        {expandedEpisode === episodeId && loadedEpisodes[episodeId] && (
+                          <div className="mt-2 p-2 rounded" style={{ background: 'var(--tblr-bg-surface-secondary)', maxHeight: '200px', overflowY: 'auto' }}>
+                            {loadedEpisodes[episodeId].source_description && (
+                              <div className="text-muted small mb-2">
+                                {loadedEpisodes[episodeId].source_description}
+                              </div>
+                            )}
+                            <div className="small" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                              {loadedEpisodes[episodeId].content || <em className="text-muted">No content</em>}
+                            </div>
+                            {loadedEpisodes[episodeId].valid_at && (
+                              <div className="text-muted small mt-2">
+                                Valid: {new Date(loadedEpisodes[episodeId].valid_at!).toLocaleString()}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
