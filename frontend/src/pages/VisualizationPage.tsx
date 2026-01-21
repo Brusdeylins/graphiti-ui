@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import * as d3 from 'd3';
 import { api } from '../api/client';
 import { useTheme } from '../contexts/ThemeContext';
@@ -71,16 +71,23 @@ export function VisualizationPage() {
     linkColor: '#cbd5e0',
     linkHighlightColor: highlightColor,
   });
+  const autoFitDoneRef = useRef(false);
 
-  // Extract unique types from visible nodes and build color map
-  const nodeTypes = graphData
-    ? [...new Set(graphData.nodes.map(n => n.type))].filter(Boolean).sort()
-    : [];
+  // Extract unique types from visible nodes and build color map (memoized)
+  const nodeTypes = useMemo(() =>
+    graphData
+      ? [...new Set(graphData.nodes.map(n => n.type))].filter(Boolean).sort()
+      : [],
+    [graphData]
+  );
 
-  const typeColors: Record<string, string> = {};
-  nodeTypes.forEach((type, index) => {
-    typeColors[type] = colorPalette[index % colorPalette.length];
-  });
+  const typeColors = useMemo(() => {
+    const colors: Record<string, string> = {};
+    nodeTypes.forEach((type, index) => {
+      colors[type] = colorPalette[index % colorPalette.length];
+    });
+    return colors;
+  }, [nodeTypes]);
 
   const handleDeleteGraph = async () => {
     if (!selectedGroup) return;
@@ -175,6 +182,9 @@ export function VisualizationPage() {
 
   useEffect(() => {
     if (!graphData || !svgRef.current || !containerRef.current) return;
+
+    // Reset auto-fit flag for new data
+    autoFitDoneRef.current = false;
 
     const container = containerRef.current;
     const width = container.clientWidth;
@@ -488,8 +498,11 @@ export function VisualizationPage() {
       node.attr('transform', (d: any) => `translate(${d.x},${d.y})`);
     });
 
-    // Auto-fit after simulation stabilizes
+    // Auto-fit after simulation stabilizes (only once per data load)
     simulation.on('end', () => {
+      if (autoFitDoneRef.current) return;
+      autoFitDoneRef.current = true;
+
       // Calculate bounding box of all nodes
       let minX = Infinity, maxX = -Infinity;
       let minY = Infinity, maxY = -Infinity;
