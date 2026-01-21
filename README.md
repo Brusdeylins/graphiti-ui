@@ -4,10 +4,10 @@ Admin interface and MCP proxy for Graphiti Knowledge Graph.
 
 ## Features
 
-- **Dashboard** - Service status (LLM, Embedder), MCP configuration
+- **Dashboard** - Service status (LLM, Embedder), MCP configuration snippet
 - **Visualization** - Interactive D3.js graph with node details
 - **Query** - Cypher query editor with graph selection
-- **Config** - Entity types, LLM/Embedding settings
+- **Entity Types** - View configured entity types for extraction
 - **API Keys** - Manage MCP API keys
 
 ## Tech Stack
