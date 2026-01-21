@@ -183,7 +183,7 @@ async def execute_query(request: QueryRequest, current_user: CurrentUser) -> dic
                     password=os.environ.get("FALKORDB_PASSWORD"),
                 )
                 graph = db.select_graph(gid)
-                result = graph.query(request.query)
+                result = graph.query(request.query, timeout=10000)  # 10 seconds
 
                 # Convert result to list of dicts
                 rows = []

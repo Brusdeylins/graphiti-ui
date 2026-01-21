@@ -44,8 +44,8 @@ export function Layout() {
   const navItems = [
     { path: '/dashboard', icon: IconDashboard, label: 'Dashboard' },
     { path: '/visualization', icon: IconGraph, label: 'Visualization' },
-    { path: '/entity-types', icon: IconCategory, label: 'Entity Types' },
     { path: '/query', icon: IconTerminal2, label: 'Query' },
+    { path: '/entity-types', icon: IconCategory, label: 'Entity Types' },
     { path: '/api-keys', icon: IconKey, label: 'API Keys' },
   ];
 

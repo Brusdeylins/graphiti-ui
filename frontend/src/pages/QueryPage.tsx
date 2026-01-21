@@ -166,7 +166,7 @@ export function QueryPage() {
             </button>
           </div>
           <div className="card-body p-0">
-            <pre className="bg-dark text-light m-0 p-3" style={{ maxHeight: '400px', overflow: 'auto' }}>
+            <pre className="bg-dark text-light m-0 p-3" style={{ maxHeight: '400px', maxWidth: '1285px', overflow: 'auto' }}>
               <code>{JSON.stringify(result.data, null, 2)}</code>
             </pre>
           </div>
