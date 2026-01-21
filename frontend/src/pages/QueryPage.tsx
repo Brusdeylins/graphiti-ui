@@ -144,7 +144,7 @@ export function QueryPage() {
       )}
 
       {result && (
-        <div className="card mb-4">
+        <div className="card mb-4" style={{ minWidth: 0, overflow: 'hidden' }}>
           <div className="card-header d-flex align-items-center">
             <h3 className="card-title mb-0">Results</h3>
             <button
@@ -165,8 +165,8 @@ export function QueryPage() {
               )}
             </button>
           </div>
-          <div className="card-body">
-            <pre className="bg-dark text-light rounded p-3 mb-0" style={{ maxHeight: '400px', overflow: 'auto' }}>
+          <div className="card-body p-0">
+            <pre className="bg-dark text-light m-0 p-3" style={{ maxHeight: '400px', overflow: 'auto' }}>
               <code>{JSON.stringify(result.data, null, 2)}</code>
             </pre>
           </div>
