@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import * as d3 from 'd3';
 import { api } from '../api/client';
 import { useTheme } from '../contexts/ThemeContext';
-import { IconRefresh, IconTrash, IconPlus, IconEdit, IconX, IconCheck, IconTrashX } from '@tabler/icons-react';
+import { IconRefresh, IconTrash, IconPlus, IconEdit, IconX, IconCheck, IconTrashX, IconAdjustments } from '@tabler/icons-react';
 
 interface Node {
   id: string;
@@ -52,6 +52,19 @@ interface Episode {
   group_id: string;
 }
 
+interface EntityTypeField {
+  name: string;
+  type: string;
+  required: boolean;
+  description: string;
+}
+
+interface EntityType {
+  name: string;
+  description: string;
+  fields: EntityTypeField[];
+}
+
 // Color palette for entity types
 const colorPalette = [
   '#206bc4', '#2fb344', '#f76707', '#d63939', '#ae3ec9',
@@ -93,6 +106,28 @@ export function VisualizationPage() {
   const [expandedEpisode, setExpandedEpisode] = useState<string | null>(null);
   const isResizingRef = useRef(false);
   const processedEdgesRef = useRef<Edge[]>([]);
+  const simulationRef = useRef<d3.Simulation<d3.SimulationNodeDatum, undefined> | null>(null);
+
+  // Graph layout parameters (with localStorage persistence)
+  const LAYOUT_DEFAULTS = { linkDistance: 150, chargeStrength: -800, nodeSize: 12, curveSpacing: 50 };
+  const loadLayoutSetting = (key: string, defaultValue: number) => {
+    if (typeof window === 'undefined') return defaultValue;
+    const saved = localStorage.getItem(`graphiti-layout-${key}`);
+    return saved ? Number(saved) : defaultValue;
+  };
+  const [linkDistance, setLinkDistance] = useState(() => loadLayoutSetting('linkDistance', LAYOUT_DEFAULTS.linkDistance));
+  const [chargeStrength, setChargeStrength] = useState(() => loadLayoutSetting('chargeStrength', LAYOUT_DEFAULTS.chargeStrength));
+  const [nodeSize, setNodeSize] = useState(() => loadLayoutSetting('nodeSize', LAYOUT_DEFAULTS.nodeSize));
+  const [curveSpacing, setCurveSpacing] = useState(() => loadLayoutSetting('curveSpacing', LAYOUT_DEFAULTS.curveSpacing));
+  const [showLayoutControls, setShowLayoutControls] = useState(false);
+
+  // Persist layout settings to localStorage
+  useEffect(() => {
+    localStorage.setItem('graphiti-layout-linkDistance', String(linkDistance));
+    localStorage.setItem('graphiti-layout-chargeStrength', String(chargeStrength));
+    localStorage.setItem('graphiti-layout-nodeSize', String(nodeSize));
+    localStorage.setItem('graphiti-layout-curveSpacing', String(curveSpacing));
+  }, [linkDistance, chargeStrength, nodeSize, curveSpacing]);
 
   // Graph Editor state
   const [showCreateNodeModal, setShowCreateNodeModal] = useState(false);
@@ -110,9 +145,15 @@ export function VisualizationPage() {
   const [newEdgeType, setNewEdgeType] = useState('');
   const [newEdgeFact, setNewEdgeFact] = useState('');
 
+  // Entity types state for dynamic forms
+  const [entityTypes, setEntityTypes] = useState<EntityType[]>([]);
+  const [selectedEntityType, setSelectedEntityType] = useState<EntityType | null>(null);
+  const [nodeAttributes, setNodeAttributes] = useState<Record<string, string>>({});
+
   // Edit form state
   const [editNodeName, setEditNodeName] = useState('');
   const [editNodeSummary, setEditNodeSummary] = useState('');
+  const [editNodeAttributes, setEditNodeAttributes] = useState<Record<string, string>>({});
   const [editEdgeName, setEditEdgeName] = useState('');
   const [editEdgeFact, setEditEdgeFact] = useState('');
 
@@ -195,9 +236,15 @@ export function VisualizationPage() {
     setHighlightedEdges(connectedEdgeIndices);
   }, []);
 
+  // Refs for episode loading to avoid re-render loops
+  const loadedEpisodesRef = useRef(loadedEpisodes);
+  const loadingEpisodesRef = useRef(loadingEpisodes);
+  loadedEpisodesRef.current = loadedEpisodes;
+  loadingEpisodesRef.current = loadingEpisodes;
+
   // Load episode content in background (no UI toggle)
   const loadEpisodeBackground = useCallback(async (episodeUuid: string) => {
-    if (loadedEpisodes[episodeUuid] || loadingEpisodes.has(episodeUuid)) return;
+    if (loadedEpisodesRef.current[episodeUuid] || loadingEpisodesRef.current.has(episodeUuid)) return;
 
     setLoadingEpisodes(prev => new Set(prev).add(episodeUuid));
     try {
@@ -217,7 +264,7 @@ export function VisualizationPage() {
         return next;
       });
     }
-  }, [loadedEpisodes, loadingEpisodes]);
+  }, []);
 
   // Handle edge click - highlight source and target nodes
   const handleEdgeClick = useCallback((edge: Edge, edgeIndex: number) => {
@@ -231,15 +278,15 @@ export function VisualizationPage() {
     setHighlightedNodes(new Set([sourceId, targetId]));
     setHighlightedEdges(new Set([edgeIndex]));
 
-    // Pre-load episodes for this edge
+    // Pre-load episodes for this edge (using ref to avoid dependency)
     if (edge.episodes && edge.episodes.length > 0) {
       edge.episodes.forEach(episodeId => {
-        if (!loadedEpisodes[episodeId]) {
+        if (!loadedEpisodesRef.current[episodeId]) {
           loadEpisodeBackground(episodeId);
         }
       });
     }
-  }, [loadedEpisodes, loadEpisodeBackground]);
+  }, [loadEpisodeBackground]);
 
   // Clear selection
   const clearSelection = useCallback(() => {
@@ -351,6 +398,46 @@ export function VisualizationPage() {
     setLimit(prev => prev);
   }, []);
 
+  const openCreateNodeModal = async () => {
+    // Reset form state
+    setNewNodeName('');
+    setNewNodeType('');
+    setNewNodeSummary('');
+    setSelectedEntityType(null);
+    setNodeAttributes({});
+
+    // Load entity types from backend
+    try {
+      const response = await api.get('/entity-types');
+      setEntityTypes(response.data || []);
+    } catch (err) {
+      console.error('Failed to load entity types:', err);
+      setEntityTypes([]);
+    }
+
+    setShowCreateNodeModal(true);
+  };
+
+  const handleEntityTypeChange = (typeName: string) => {
+    if (typeName === '__custom__') {
+      setSelectedEntityType(null);
+      setNewNodeType('');
+      setNodeAttributes({});
+    } else {
+      const entityType = entityTypes.find(et => et.name === typeName);
+      setSelectedEntityType(entityType || null);
+      setNewNodeType(typeName);
+      // Initialize attributes for required fields
+      const attrs: Record<string, string> = {};
+      if (entityType?.fields) {
+        entityType.fields.forEach(f => {
+          attrs[f.name] = '';
+        });
+      }
+      setNodeAttributes(attrs);
+    }
+  };
+
   const handleCreateNode = async () => {
     if (!newNodeName.trim() || !selectedGroup) {
       alert('Please enter a node name and select a group');
@@ -364,6 +451,7 @@ export function VisualizationPage() {
         entity_type: newNodeType.trim() || 'Entity',
         summary: newNodeSummary.trim(),
         group_id: selectedGroup,
+        attributes: Object.keys(nodeAttributes).length > 0 ? nodeAttributes : undefined,
       });
 
       if (response.data.success) {
@@ -371,6 +459,8 @@ export function VisualizationPage() {
         setNewNodeName('');
         setNewNodeType('');
         setNewNodeSummary('');
+        setSelectedEntityType(null);
+        setNodeAttributes({});
         // Refresh graph after short delay to allow episode processing
         setTimeout(refreshGraph, 1500);
       } else {
@@ -421,6 +511,14 @@ export function VisualizationPage() {
     if (!selectedNode) return;
     setEditNodeName(selectedNode.name || '');
     setEditNodeSummary(selectedNode.summary || '');
+    // Load existing attributes, converting all values to strings
+    const attrs: Record<string, string> = {};
+    if (selectedNode.attributes) {
+      Object.entries(selectedNode.attributes).forEach(([key, value]) => {
+        attrs[key] = value != null ? String(value) : '';
+      });
+    }
+    setEditNodeAttributes(attrs);
     setIsEditingNode(true);
   };
 
@@ -428,6 +526,7 @@ export function VisualizationPage() {
     setIsEditingNode(false);
     setEditNodeName('');
     setEditNodeSummary('');
+    setEditNodeAttributes({});
   };
 
   const handleUpdateNode = async () => {
@@ -435,14 +534,24 @@ export function VisualizationPage() {
 
     setIsSaving(true);
     try {
+      // Filter out empty attributes
+      const filteredAttributes: Record<string, string> = {};
+      Object.entries(editNodeAttributes).forEach(([key, value]) => {
+        if (value.trim()) {
+          filteredAttributes[key] = value.trim();
+        }
+      });
+
       const response = await api.put(`/graph/node/${selectedNode.id}`, {
         name: editNodeName.trim() || null,
         summary: editNodeSummary.trim() || null,
         group_id: selectedNode.group_id,
+        attributes: Object.keys(filteredAttributes).length > 0 ? filteredAttributes : undefined,
       });
 
       if (response.data.success) {
         setIsEditingNode(false);
+        setEditNodeAttributes({});
         refreshGraph();
       } else {
         alert(`Failed to update node: ${response.data.error}`);
@@ -578,8 +687,12 @@ export function VisualizationPage() {
         const response = await api.get(`/graph/data?${params}`);
         setGraphData(response.data);
 
-        const uniqueGroups = [...new Set(response.data.nodes.map((n: Node) => n.group_id).filter(Boolean))];
-        setGroups(uniqueGroups as string[]);
+        // Only update groups list when no group is selected (showing all data)
+        // This preserves the full list when filtering by a specific group
+        if (!selectedGroup) {
+          const uniqueGroups = [...new Set(response.data.nodes.map((n: Node) => n.group_id).filter(Boolean))];
+          setGroups(uniqueGroups as string[]);
+        }
       } catch (err: any) {
         setError(err.response?.data?.detail || 'Failed to load graph data');
       } finally {
@@ -668,22 +781,25 @@ export function VisualizationPage() {
     const simulation = d3.forceSimulation(graphData.nodes as d3.SimulationNodeDatum[])
       .force('link', d3.forceLink(processedEdges)
         .id((d: any) => d.id)
-        .distance(150)
+        .distance(linkDistance)
         .strength(0.3))
       .force('charge', d3.forceManyBody()
-        .strength(-800)
+        .strength(chargeStrength)
         .distanceMin(20)
         .distanceMax(400))
-      .force('center', d3.forceCenter(width / 2, height / 2).strength(0.05))
-      .force('collision', d3.forceCollide().radius(40).strength(0.5))
+      .force('center', d3.forceCenter(width / 2, height / 2).strength(0.1))
+      .force('collision', d3.forceCollide().radius(nodeSize + 5).strength(0.7))
       .velocityDecay(0.4)
       .alphaDecay(0.02);
+
+    // Store simulation ref for dynamic updates
+    simulationRef.current = simulation;
 
     // Arrow marker for directed edges
     svg.append('defs').append('marker')
       .attr('id', 'arrowhead')
       .attr('viewBox', '-0 -5 10 10')
-      .attr('refX', 20)
+      .attr('refX', 10)
       .attr('refY', 0)
       .attr('orient', 'auto')
       .attr('markerWidth', 6)
@@ -696,7 +812,7 @@ export function VisualizationPage() {
     svg.select('defs').append('marker')
       .attr('id', 'arrowhead-highlight')
       .attr('viewBox', '-0 -5 10 10')
-      .attr('refX', 20)
+      .attr('refX', 10)
       .attr('refY', 0)
       .attr('orient', 'auto')
       .attr('markerWidth', 6)
@@ -850,11 +966,11 @@ export function VisualizationPage() {
 
     // Node circles with drop shadow
     node.append('circle')
-      .attr('r', 12)
+      .attr('r', nodeSize)
       .attr('fill', (d: Node) => getTypeColor(d.type))
-      .attr('stroke', isDark ? '#182433' : '#ffffff')
+      .attr('stroke', isDark ? '#3a4a5c' : '#ffffff')
       .attr('stroke-width', 2)
-      .attr('filter', 'drop-shadow(0 2px 3px rgba(0,0,0,0.2))')
+      .attr('filter', isDark ? 'drop-shadow(0 2px 3px rgba(0,0,0,0.4))' : 'drop-shadow(0 2px 3px rgba(0,0,0,0.2))')
       .on('click', (event, d: Node) => {
         event.stopPropagation();
         handleNodeClick(d, processedEdges);
@@ -863,56 +979,96 @@ export function VisualizationPage() {
     // Node labels
     node.append('text')
       .text((d: Node) => d.name?.substring(0, 20) || d.id.substring(0, 8))
-      .attr('x', 16)
+      .attr('x', nodeSize + 4)
       .attr('y', 4)
       .attr('fill', textColor)
       .attr('font-size', '11px')
       .attr('font-family', 'Inter, system-ui, sans-serif')
       .attr('pointer-events', 'none');
 
-    // Helper function to generate curved path
+    // Helper function to generate curved path with node radius offset
     function linkPath(d: any): string {
       const source = d.source;
       const target = d.target;
 
       if (!source.x || !target.x) return '';
 
+      // Offset for node radius + arrow size
+      const sourceRadius = nodeSize;
+      const targetRadius = nodeSize + 6; // Extra space for arrowhead
+
       // Self-loop
       if (source.id === target.id) {
         const x = source.x;
         const y = source.y;
-        const r = 30;
-        return `M ${x - 10} ${y - 10}
-                A ${r} ${r} 0 1 1 ${x + 10} ${y - 10}
-                A ${r} ${r} 0 0 1 ${x - 10} ${y - 10}`;
+        const r = 30 + nodeSize; // Scale loop with node size
+        return `M ${x - nodeSize} ${y - nodeSize}
+                A ${r} ${r} 0 1 1 ${x + nodeSize} ${y - nodeSize}
+                A ${r} ${r} 0 0 1 ${x - nodeSize} ${y - nodeSize}`;
       }
-
-      const dx = target.x - source.x;
-      const dy = target.y - source.y;
-      const dr = Math.sqrt(dx * dx + dy * dy);
 
       // Multiple edges between same nodes - curve them
-      const linkCount = d.linkCount || 1;
-      const linkIndex = d.linkIndex || 0;
+      const linkCount = d.linkCount ?? 1;
+      const linkIndex = d.linkIndex ?? 0;
+
+      // Direct distance for straight line offset calculation
+      const directDx = target.x - source.x;
+      const directDy = target.y - source.y;
+      const directDist = Math.sqrt(directDx * directDx + directDy * directDy);
+
+      if (directDist === 0) return '';
 
       if (linkCount === 1) {
-        // Single edge - straight line (or slight curve)
-        return `M ${source.x} ${source.y} L ${target.x} ${target.y}`;
+        // Single edge - straight line with node radius offset
+        const ux = directDx / directDist;
+        const uy = directDy / directDist;
+        const startX = source.x + ux * sourceRadius;
+        const startY = source.y + uy * sourceRadius;
+        const endX = target.x - ux * targetRadius;
+        const endY = target.y - uy * targetRadius;
+        return `M ${startX} ${startY} L ${endX} ${endY}`;
       }
 
-      // Multiple edges - create curved paths
-      const offset = (linkIndex - (linkCount - 1) / 2) * 30;
+      // Use consistent direction based on sorted node IDs (not edge direction)
+      // This ensures A→B and B→A curves don't overlap
+      const sourceId = source.id;
+      const targetId = target.id;
+      const isReversed = sourceId > targetId;
+
+      // Always compute dx/dy from lower ID to higher ID for consistent perpendicular
+      const dx = isReversed ? (source.x - target.x) : (target.x - source.x);
+      const dy = isReversed ? (source.y - target.y) : (target.y - source.y);
+      const dr = Math.sqrt(dx * dx + dy * dy);
+
+      if (dr === 0) return '';
+
+      // Multiple edges - create curved paths with symmetric offsets
+      const offset = ((linkIndex + 0.5) - linkCount / 2) * curveSpacing;
       const midX = (source.x + target.x) / 2;
       const midY = (source.y + target.y) / 2;
 
-      // Perpendicular offset
+      // Perpendicular offset (consistent direction regardless of edge direction)
       const nx = -dy / dr;
       const ny = dx / dr;
 
       const ctrlX = midX + nx * offset;
       const ctrlY = midY + ny * offset;
 
-      return `M ${source.x} ${source.y} Q ${ctrlX} ${ctrlY} ${target.x} ${target.y}`;
+      // Offset start point along direction to control point
+      const toCtrlDx = ctrlX - source.x;
+      const toCtrlDy = ctrlY - source.y;
+      const toCtrlDist = Math.sqrt(toCtrlDx * toCtrlDx + toCtrlDy * toCtrlDy);
+      const startX = source.x + (toCtrlDx / toCtrlDist) * sourceRadius;
+      const startY = source.y + (toCtrlDy / toCtrlDist) * sourceRadius;
+
+      // Offset end point along direction from control point
+      const fromCtrlDx = target.x - ctrlX;
+      const fromCtrlDy = target.y - ctrlY;
+      const fromCtrlDist = Math.sqrt(fromCtrlDx * fromCtrlDx + fromCtrlDy * fromCtrlDy);
+      const endX = target.x - (fromCtrlDx / fromCtrlDist) * targetRadius;
+      const endY = target.y - (fromCtrlDy / fromCtrlDist) * targetRadius;
+
+      return `M ${startX} ${startY} Q ${ctrlX} ${ctrlY} ${endX} ${endY}`;
     }
 
     // Helper to get edge label position
@@ -927,12 +1083,8 @@ export function VisualizationPage() {
         return { x: source.x, y: source.y - 50 };
       }
 
-      const dx = target.x - source.x;
-      const dy = target.y - source.y;
-      const dr = Math.sqrt(dx * dx + dy * dy);
-
-      const linkCount = d.linkCount || 1;
-      const linkIndex = d.linkIndex || 0;
+      const linkCount = d.linkCount ?? 1;
+      const linkIndex = d.linkIndex ?? 0;
 
       const midX = (source.x + target.x) / 2;
       const midY = (source.y + target.y) / 2;
@@ -941,7 +1093,19 @@ export function VisualizationPage() {
         return { x: midX, y: midY };
       }
 
-      const offset = (linkIndex - (linkCount - 1) / 2) * 30;
+      // Use consistent direction based on sorted node IDs (same as linkPath)
+      const sourceId = source.id;
+      const targetId = target.id;
+      const isReversed = sourceId > targetId;
+
+      const dx = isReversed ? (source.x - target.x) : (target.x - source.x);
+      const dy = isReversed ? (source.y - target.y) : (target.y - source.y);
+      const dr = Math.sqrt(dx * dx + dy * dy);
+
+      if (dr === 0) return { x: midX, y: midY };
+
+      // Same formula as linkPath for consistency
+      const offset = ((linkIndex + 0.5) - linkCount / 2) * curveSpacing;
       const nx = -dy / dr;
       const ny = dx / dr;
 
@@ -979,8 +1143,9 @@ export function VisualizationPage() {
       node.attr('transform', (d: any) => `translate(${d.x},${d.y})`);
     });
 
-    // Auto-fit after simulation stabilizes (only once per data load)
-    simulation.on('end', () => {
+    // Auto-fit after initial positioning (only once per data load)
+    // Use timeout to let simulation run a few ticks first
+    const autoFitTimeout = setTimeout(() => {
       if (autoFitDoneRef.current) return;
       autoFitDoneRef.current = true;
 
@@ -1014,16 +1179,49 @@ export function VisualizationPage() {
           .scale(scale)
           .translate(-centerX, -centerY);
 
-        svg.transition()
-          .duration(750)
-          .call(zoom.transform, transform);
+        // Instant fit (no animation) to avoid double-zoom effect
+        svg.call(zoom.transform, transform);
       }
-    });
+    }, 100); // Short delay for initial node positioning
 
     return () => {
       simulation.stop();
+      clearTimeout(autoFitTimeout);
     };
-  }, [graphData, theme, typeColors, handleNodeClick, handleEdgeClick, clearSelection, selectedGroup]);
+  }, [graphData, theme, typeColors, handleNodeClick, handleEdgeClick, clearSelection, selectedGroup, linkDistance, chargeStrength, nodeSize, curveSpacing]);
+
+  // Update simulation forces when layout parameters change (without full re-render)
+  useEffect(() => {
+    if (!simulationRef.current) return;
+
+    const simulation = simulationRef.current;
+
+    // Update forces
+    const linkForce = simulation.force('link') as d3.ForceLink<d3.SimulationNodeDatum, d3.SimulationLinkDatum<d3.SimulationNodeDatum>>;
+    if (linkForce) {
+      linkForce.distance(linkDistance);
+    }
+
+    const chargeForce = simulation.force('charge') as d3.ForceManyBody<d3.SimulationNodeDatum>;
+    if (chargeForce) {
+      chargeForce.strength(chargeStrength);
+    }
+
+    const collisionForce = simulation.force('collision') as d3.ForceCollide<d3.SimulationNodeDatum>;
+    if (collisionForce) {
+      collisionForce.radius(nodeSize + 5);
+    }
+
+    // Update visual node size
+    const node = nodeSelectionRef.current;
+    if (node) {
+      node.selectAll('circle').attr('r', nodeSize);
+      node.selectAll('text').attr('x', nodeSize + 4);
+    }
+
+    // Reheat simulation to apply changes
+    simulation.alpha(0.3).restart();
+  }, [linkDistance, chargeStrength, nodeSize]);
 
   // Separate effect for highlighting updates (doesn't restart simulation)
   useEffect(() => {
@@ -1061,17 +1259,6 @@ export function VisualizationPage() {
         <div className="card-body py-2">
           <div className="row align-items-center">
             <div className="col-auto">
-              <button
-                onClick={() => setShowCreateNodeModal(true)}
-                disabled={!selectedGroup}
-                className="btn btn-sm btn-primary"
-                title={selectedGroup ? 'Create new entity' : 'Select a group first'}
-              >
-                <IconPlus size={16} className="me-1" />
-                Node
-              </button>
-            </div>
-            <div className="col-auto border-start ps-3">
               <select
                 value={selectedGroup}
                 onChange={e => setSelectedGroup(e.target.value)}
@@ -1082,6 +1269,42 @@ export function VisualizationPage() {
                   <option key={g} value={g}>{g}</option>
                 ))}
               </select>
+            </div>
+            <div className="col-auto">
+              <select
+                value={limit}
+                onChange={e => setLimit(Number(e.target.value))}
+                className="form-select form-select-sm"
+              >
+                <option value={100}>100 Nodes</option>
+                <option value={250}>250 Nodes</option>
+                <option value={500}>500 Nodes</option>
+                <option value={1000}>1000 Nodes</option>
+                <option value={1500}>1500 Nodes</option>
+                <option value={2000}>2000 Nodes</option>
+                <option value={3000}>3000 Nodes</option>
+                <option value={5000}>5000 Nodes</option>
+                <option value={10000}>10000 Nodes</option>
+              </select>
+            </div>
+            <div className="col-auto text-secondary">
+              {graphData && `${graphData.nodes.length} Nodes • ${graphData.edges.length} Edges`}
+            </div>
+            {selectedGroup && (
+              <div className="col-auto text-muted small" title="Hold Shift and drag from one node to another to create a relationship">
+                <kbd>Shift</kbd>+Drag to link nodes
+              </div>
+            )}
+            <div className="col-auto ms-auto">
+              <button
+                onClick={openCreateNodeModal}
+                disabled={!selectedGroup}
+                className="btn btn-sm btn-primary"
+                title={selectedGroup ? 'Create new entity' : 'Select a group first'}
+              >
+                <IconPlus size={16} className="me-1" />
+                Node
+              </button>
             </div>
             {selectedGroup && (
               <div className="col-auto">
@@ -1096,26 +1319,6 @@ export function VisualizationPage() {
                 </button>
               </div>
             )}
-            <div className="col-auto">
-              <select
-                value={limit}
-                onChange={e => setLimit(Number(e.target.value))}
-                className="form-select form-select-sm"
-              >
-                <option value={100}>100 Nodes</option>
-                <option value={250}>250 Nodes</option>
-                <option value={500}>500 Nodes</option>
-                <option value={1000}>1000 Nodes</option>
-              </select>
-            </div>
-            {selectedGroup && (
-              <div className="col-auto text-muted small" title="Hold Shift and drag from one node to another to create a relationship">
-                <kbd>Shift</kbd>+Drag to link nodes
-              </div>
-            )}
-            <div className="col-auto ms-auto text-secondary">
-              {graphData && `${graphData.nodes.length} Nodes • ${graphData.edges.length} Edges`}
-            </div>
           </div>
         </div>
       </div>
@@ -1123,7 +1326,7 @@ export function VisualizationPage() {
       {/* Graph container */}
       <div ref={containerRef} className="card flex-grow-1 position-relative">
         {isLoading && (
-          <div className="position-absolute top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center bg-white bg-opacity-75">
+          <div className="position-absolute top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center" style={{ backgroundColor: 'var(--tblr-card-bg)', opacity: 0.9 }}>
             <div className="text-center">
               <div className="spinner-border text-primary" role="status" />
               <p className="mt-3 text-secondary">Loading graph data...</p>
@@ -1164,6 +1367,96 @@ export function VisualizationPage() {
           </div>
         )}
 
+        {/* Layout Controls */}
+        <div className="card position-absolute" style={{ bottom: '1rem', left: '1rem', width: showLayoutControls ? '280px' : 'auto' }}>
+          <div className="card-body py-2 px-3">
+            <div
+              className="d-flex align-items-center gap-2 cursor-pointer"
+              onClick={() => setShowLayoutControls(!showLayoutControls)}
+              style={{ cursor: 'pointer' }}
+            >
+              <IconAdjustments size={18} />
+              <span className="fw-medium">Layout</span>
+              <span className="ms-auto text-muted small">{showLayoutControls ? '▼' : '▶'}</span>
+            </div>
+            {showLayoutControls && (
+              <div className="mt-3">
+                <div className="mb-3">
+                  <label className="form-label small d-flex justify-content-between">
+                    <span>Node Distance</span>
+                    <span className="text-muted">{linkDistance / 10}</span>
+                  </label>
+                  <input
+                    type="range"
+                    className="form-range"
+                    min="5"
+                    max="50"
+                    step="1"
+                    value={linkDistance / 10}
+                    onChange={e => setLinkDistance(Number(e.target.value) * 10)}
+                  />
+                </div>
+                <div className="mb-3">
+                  <label className="form-label small d-flex justify-content-between">
+                    <span>Repulsion</span>
+                    <span className="text-muted">{Math.abs(chargeStrength) / 100}</span>
+                  </label>
+                  <input
+                    type="range"
+                    className="form-range"
+                    min="1"
+                    max="20"
+                    step="1"
+                    value={Math.abs(chargeStrength) / 100}
+                    onChange={e => setChargeStrength(-Number(e.target.value) * 100)}
+                  />
+                </div>
+                <div className="mb-3">
+                  <label className="form-label small d-flex justify-content-between">
+                    <span>Node Size</span>
+                    <span className="text-muted">{nodeSize}</span>
+                  </label>
+                  <input
+                    type="range"
+                    className="form-range"
+                    min="6"
+                    max="24"
+                    step="2"
+                    value={nodeSize}
+                    onChange={e => setNodeSize(Number(e.target.value))}
+                  />
+                </div>
+                <div className="mb-2">
+                  <label className="form-label small d-flex justify-content-between">
+                    <span>Edge Curve</span>
+                    <span className="text-muted">{curveSpacing}</span>
+                  </label>
+                  <input
+                    type="range"
+                    className="form-range"
+                    min="20"
+                    max="100"
+                    step="5"
+                    value={curveSpacing}
+                    onChange={e => setCurveSpacing(Number(e.target.value))}
+                  />
+                </div>
+                <button
+                  className="btn btn-sm btn-outline-secondary w-100 mt-2"
+                  onClick={() => {
+                    setLinkDistance(LAYOUT_DEFAULTS.linkDistance);
+                    setChargeStrength(LAYOUT_DEFAULTS.chargeStrength);
+                    setNodeSize(LAYOUT_DEFAULTS.nodeSize);
+                    setCurveSpacing(LAYOUT_DEFAULTS.curveSpacing);
+                  }}
+                >
+                  Reset to Defaults
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+
         {/* Node details */}
         {selectedNode && (
           <div className="card position-absolute" style={{ top: '1rem', right: '1rem', width: `${panelWidth}px`, maxHeight: 'calc(100% - 2rem)', display: 'flex', flexDirection: 'column' }}>
@@ -1186,15 +1479,15 @@ export function VisualizationPage() {
               {!isEditingNode && (
                 <>
                   <button
-                    className="btn btn-sm btn-ghost-primary ms-auto"
-                    onClick={startEditingNode}
+                    className="btn btn-sm btn-icon ms-auto"
+                    onClick={() => startEditingNode()}
                     title="Edit node"
                   >
                     <IconEdit size={16} />
                   </button>
                   <button
-                    className="btn btn-sm btn-ghost-danger"
-                    onClick={handleDeleteNode}
+                    className="btn btn-sm btn-icon text-danger"
+                    onClick={() => handleDeleteNode()}
                     disabled={isSaving}
                     title="Delete node"
                   >
@@ -1232,6 +1525,43 @@ export function VisualizationPage() {
                       onChange={e => setEditNodeSummary(e.target.value)}
                     />
                   </div>
+
+                  {/* Editable Attributes */}
+                  {Object.keys(editNodeAttributes).length > 0 && (
+                    <div className="mb-3">
+                      <label className="form-label">Attributes</label>
+                      <div className="border rounded p-2" style={{ background: 'var(--tblr-bg-surface-secondary)' }}>
+                        {Object.entries(editNodeAttributes).map(([key, value]) => (
+                          <div key={key} className="mb-2">
+                            <label className="form-label small mb-1">{key}</label>
+                            <input
+                              type="text"
+                              className="form-control form-control-sm"
+                              value={value}
+                              onChange={e => setEditNodeAttributes(prev => ({ ...prev, [key]: e.target.value }))}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Add new attribute */}
+                  <div className="mb-3">
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-outline-secondary"
+                      onClick={() => {
+                        const name = prompt('Attribute name:');
+                        if (name && name.trim()) {
+                          setEditNodeAttributes(prev => ({ ...prev, [name.trim()]: '' }));
+                        }
+                      }}
+                    >
+                      + Add Attribute
+                    </button>
+                  </div>
+
                   <div className="d-flex gap-2">
                     <button
                       className="btn btn-primary"
@@ -1309,14 +1639,22 @@ export function VisualizationPage() {
                   <label className="form-label text-muted small mb-1">Attributes</label>
                   <table className="table table-sm table-borderless mb-0">
                     <tbody>
-                      {Object.entries(selectedNode.attributes).map(([key, value]) => (
-                        <tr key={key}>
-                          <td className="text-muted ps-0" style={{ width: '100px' }}>{key}</td>
-                          <td className="small" style={{ wordBreak: 'break-word' }}>
-                            {typeof value === 'object' ? JSON.stringify(value) : String(value)}
-                          </td>
-                        </tr>
-                      ))}
+                      {Object.entries(selectedNode.attributes).map(([key, value]) => {
+                        const strValue = typeof value === 'object' ? JSON.stringify(value) : String(value);
+                        const isUrl = typeof value === 'string' && (value.startsWith('http://') || value.startsWith('https://'));
+                        return (
+                          <tr key={key}>
+                            <td className="text-muted ps-0" style={{ width: '100px' }}>{key}</td>
+                            <td className="small" style={{ wordBreak: 'break-word' }}>
+                              {isUrl ? (
+                                <a href={value} target="_blank" rel="noopener noreferrer" className="text-primary">
+                                  {strValue}
+                                </a>
+                              ) : strValue}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -1415,15 +1753,15 @@ export function VisualizationPage() {
               {!isEditingEdge && (
                 <>
                   <button
-                    className="btn btn-sm btn-ghost-primary ms-auto"
-                    onClick={startEditingEdge}
+                    className="btn btn-sm btn-icon ms-auto"
+                    onClick={() => startEditingEdge()}
                     title="Edit relationship"
                   >
                     <IconEdit size={16} />
                   </button>
                   <button
-                    className="btn btn-sm btn-ghost-danger"
-                    onClick={handleDeleteEdge}
+                    className="btn btn-sm btn-icon text-danger"
+                    onClick={() => handleDeleteEdge()}
                     disabled={isSaving}
                     title="Delete relationship"
                   >
@@ -1641,15 +1979,87 @@ export function VisualizationPage() {
                 </div>
                 <div className="mb-3">
                   <label className="form-label">Type</label>
-                  <input
-                    type="text"
-                    className="form-control"
-                    value={newNodeType}
-                    onChange={e => setNewNodeType(e.target.value)}
-                    placeholder="Person, Organization, etc."
-                  />
-                  <small className="text-muted">Leave empty for default "Entity" type</small>
+                  {entityTypes.length > 0 ? (
+                    <>
+                      <select
+                        className="form-select"
+                        value={selectedEntityType?.name || '__custom__'}
+                        onChange={e => handleEntityTypeChange(e.target.value)}
+                      >
+                        <option value="__custom__">Custom Type...</option>
+                        {entityTypes.map(et => (
+                          <option key={et.name} value={et.name}>
+                            {et.name}
+                          </option>
+                        ))}
+                      </select>
+                      {selectedEntityType && (
+                        <small className="text-muted">{selectedEntityType.description}</small>
+                      )}
+                      {!selectedEntityType && (
+                        <input
+                          type="text"
+                          className="form-control mt-2"
+                          value={newNodeType}
+                          onChange={e => setNewNodeType(e.target.value)}
+                          placeholder="Enter custom type (e.g., Person, Organization)"
+                        />
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <input
+                        type="text"
+                        className="form-control"
+                        value={newNodeType}
+                        onChange={e => setNewNodeType(e.target.value)}
+                        placeholder="Person, Organization, etc."
+                      />
+                      <small className="text-muted">Leave empty for default "Entity" type</small>
+                    </>
+                  )}
                 </div>
+
+                {/* Dynamic fields based on selected entity type */}
+                {selectedEntityType && selectedEntityType.fields && selectedEntityType.fields.length > 0 && (
+                  <div className="mb-3">
+                    <label className="form-label">Attributes</label>
+                    <div className="border rounded p-3" style={{ background: 'var(--tblr-bg-surface-secondary)' }}>
+                      {selectedEntityType.fields.map(field => (
+                        <div key={field.name} className="mb-2">
+                          <label className={`form-label small ${field.required ? 'required' : ''}`}>
+                            {field.name}
+                            {field.description && (
+                              <span className="text-muted ms-1" title={field.description}>
+                                ({field.type})
+                              </span>
+                            )}
+                          </label>
+                          {field.type === 'bool' ? (
+                            <select
+                              className="form-select form-select-sm"
+                              value={nodeAttributes[field.name] || ''}
+                              onChange={e => setNodeAttributes(prev => ({ ...prev, [field.name]: e.target.value }))}
+                            >
+                              <option value="">-- Select --</option>
+                              <option value="true">Yes</option>
+                              <option value="false">No</option>
+                            </select>
+                          ) : (
+                            <input
+                              type={field.type === 'int' || field.type === 'float' ? 'number' : 'text'}
+                              className="form-control form-control-sm"
+                              value={nodeAttributes[field.name] || ''}
+                              onChange={e => setNodeAttributes(prev => ({ ...prev, [field.name]: e.target.value }))}
+                              placeholder={field.description || field.name}
+                            />
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <div className="mb-3">
                   <label className="form-label">Summary</label>
                   <textarea

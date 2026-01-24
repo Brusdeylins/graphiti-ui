@@ -7,7 +7,25 @@ import {
   IconDatabase,
   IconBrain,
   IconVectorBezier2,
+  IconLoader2,
 } from '@tabler/icons-react';
+
+// CSS for spinning animation
+const spinKeyframes = `
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.spin { animation: spin 1s linear infinite; }
+`;
+
+// Inject styles once
+if (typeof document !== 'undefined' && !document.getElementById('dashboard-spin-styles')) {
+  const style = document.createElement('style');
+  style.id = 'dashboard-spin-styles';
+  style.textContent = spinKeyframes;
+  document.head.appendChild(style);
+}
 
 interface LLMStatus {
   api_url: string;
@@ -28,12 +46,20 @@ interface EmbedderStatus {
   error?: string;
 }
 
+interface QueueStatus {
+  total_pending: number;
+  currently_processing: number;
+  error?: string | null;
+}
+
 export function DashboardPage() {
   const [llmStatus, setLlmStatus] = useState<LLMStatus | null>(null);
   const [embedderStatus, setEmbedderStatus] = useState<EmbedderStatus | null>(null);
+  const [queueStatus, setQueueStatus] = useState<QueueStatus | null>(null);
   const [falkordbBrowserUrl, setFalkordbBrowserUrl] = useState<string>('');
   const [isLoading, setIsLoading] = useState(true);
 
+  // Initial fetch of all status data
   useEffect(() => {
     const fetchStatus = async () => {
       try {
@@ -45,6 +71,7 @@ export function DashboardPage() {
         setLlmStatus(llmRes.data);
         setEmbedderStatus(embedderRes.data);
         setFalkordbBrowserUrl(statusRes.data?.falkordb?.browser_url || '');
+        setQueueStatus(statusRes.data?.queue || null);
       } catch (error) {
         console.error('Failed to fetch status:', error);
       } finally {
@@ -52,6 +79,23 @@ export function DashboardPage() {
       }
     };
     fetchStatus();
+  }, []);
+
+  // Auto-refresh queue status every 2 seconds
+  useEffect(() => {
+    const fetchQueueStatus = async () => {
+      try {
+        const res = await api.get('/dashboard/status').catch(() => null);
+        if (res?.data?.queue) {
+          setQueueStatus(res.data.queue);
+        }
+      } catch {
+        // Silently ignore polling errors
+      }
+    };
+
+    const interval = setInterval(fetchQueueStatus, 2000);
+    return () => clearInterval(interval);
   }, []);
 
   const mcpEndpoint = `${window.location.origin}/mcp/`;
@@ -71,7 +115,7 @@ export function DashboardPage() {
       <h3 className="mb-3">Service Status</h3>
       <div className="row row-deck row-cards mb-4">
         {/* LLM Status */}
-        <div className="col-md-6">
+        <div className="col-md-4">
           <div className="card">
             <div className="card-body">
               <div className="subheader">LLM Provider</div>
@@ -110,7 +154,7 @@ export function DashboardPage() {
         </div>
 
         {/* Embedder Status */}
-        <div className="col-md-6">
+        <div className="col-md-4">
           <div className="card">
             <div className="card-body">
               <div className="subheader">Embedder</div>
@@ -142,6 +186,41 @@ export function DashboardPage() {
                     <div className="mt-2">
                       <small className="text-muted">Available: {embedderStatus.available_models.slice(0, 5).join(', ')}{embedderStatus.available_models.length > 5 ? '...' : ''}</small>
                     </div>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Queue Processing Status */}
+        <div className="col-md-4">
+          <div className="card">
+            <div className="card-body">
+              <div className="subheader">Processing Queue</div>
+              {isLoading ? (
+                <div className="placeholder-glow">
+                  <span className="placeholder col-6"></span>
+                </div>
+              ) : (
+                <>
+                  <div className="d-flex align-items-center mt-2">
+                    <IconLoader2 size={24} className={`me-2 ${(queueStatus?.currently_processing ?? 0) > 0 ? 'text-warning spin' : 'text-success'}`} />
+                    <span className={`h3 mb-0 ${(queueStatus?.currently_processing ?? 0) > 0 ? 'text-warning' : 'text-success'}`}>
+                      {(queueStatus?.currently_processing ?? 0) > 0 ? 'Processing' : 'Idle'}
+                    </span>
+                  </div>
+                  <div className="mt-2">
+                    <span className="h2 mb-0">{queueStatus?.total_pending ?? 0}</span>
+                    <span className="text-muted ms-2">pending</span>
+                  </div>
+                  <div className="mt-1">
+                    <small className="text-muted">
+                      {queueStatus?.currently_processing ?? 0} currently processing
+                    </small>
+                  </div>
+                  {queueStatus?.error && (
+                    <div className="mt-2 text-danger small">{queueStatus.error}</div>
                   )}
                 </>
               )}

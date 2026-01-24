@@ -46,10 +46,13 @@ async def proxy_mcp(request: Request, path: str) -> Response:
 
     # Forward request to MCP server
     # The MCP server's endpoint is at /mcp, so we prepend it
+    # Strip trailing slashes to avoid 307 redirects
     settings = get_settings()
     mcp_url = f"{settings.graphiti_mcp_url}/mcp"
     if path:
-        mcp_url = f"{mcp_url}/{path}"
+        path = path.rstrip("/")
+        if path:
+            mcp_url = f"{mcp_url}/{path}"
 
     # Get request body if present
     body = await request.body()

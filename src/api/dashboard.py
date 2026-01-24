@@ -177,6 +177,18 @@ async def get_service_status(current_user: CurrentUser) -> dict:
         embedder_config["model"],
     )
 
+    # Check queue status from MCP server
+    queue_status = {"total_pending": 0, "currently_processing": 0, "error": None}
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(f"{settings.graphiti_mcp_url}/queue/status")
+            if response.status_code == 200:
+                data = response.json()
+                queue_status["total_pending"] = data.get("total_pending", 0)
+                queue_status["currently_processing"] = data.get("currently_processing", 0)
+    except Exception as e:
+        queue_status["error"] = str(e)
+
     return {
         "graphiti_mcp": {
             "status": graphiti_status,
@@ -200,4 +212,5 @@ async def get_service_status(current_user: CurrentUser) -> dict:
             "api_url": embedder_config["api_url"],
             **({k: v for k, v in embedder_check.items() if k != "status"}),
         },
+        "queue": queue_status,
     }

@@ -58,9 +58,10 @@ class GraphitiClient:
                 }
 
                 response = await client.post(
-                    f"{self.base_url}/mcp/",
+                    f"{self.base_url}/mcp",
                     json=payload,
                     headers={"Content-Type": "application/json"},
+                    follow_redirects=True,
                 )
 
                 if response.status_code == 200:

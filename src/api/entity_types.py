@@ -1,54 +1,79 @@
-"""Entity Types API routes."""
+"""Entity Types API routes - proxies to MCP Server."""
 
-from typing import Any
-
+import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from ..auth.dependencies import CurrentUser
-from ..services.config_service import read_config, write_config
+from ..config import get_settings
 
 router = APIRouter()
+
+
+class EntityTypeField(BaseModel):
+    """Entity type field model."""
+
+    name: str = Field(..., description="Field name")
+    type: str = Field(default="str", description="Field type: str, int, float, bool")
+    required: bool = Field(default=False, description="Whether the field is required")
+    description: str = Field(default="", description="Field description for LLM extraction")
 
 
 class EntityType(BaseModel):
     """Entity type model."""
 
-    name: str = Field(..., pattern=r"^[A-Z][a-zA-Z0-9]*$", description="PascalCase name")
-    description: str = Field(..., min_length=10, description="Description for LLM extraction")
+    name: str = Field(..., description="PascalCase name")
+    description: str = Field(..., description="Description for LLM extraction")
+    fields: list[EntityTypeField] = Field(default_factory=list, description="Structured fields")
+    source: str | None = Field(default=None, description="Source: config or api")
+    created_at: str | None = Field(default=None, description="Creation timestamp")
+    modified_at: str | None = Field(default=None, description="Last modification timestamp")
 
 
 class EntityTypeCreate(BaseModel):
     """Create entity type request."""
 
-    name: str = Field(..., pattern=r"^[A-Z][a-zA-Z0-9]*$")
-    description: str = Field(..., min_length=10)
+    name: str = Field(..., pattern=r"^[A-Z][a-zA-Z0-9]*$", description="PascalCase name")
+    description: str = Field(..., min_length=10, description="Description for LLM extraction")
+    fields: list[EntityTypeField] = Field(default_factory=list, description="Structured fields")
 
 
 class EntityTypeUpdate(BaseModel):
     """Update entity type request."""
 
-    description: str = Field(..., min_length=10)
+    description: str | None = Field(default=None, min_length=10, description="Description for LLM extraction")
+    fields: list[EntityTypeField] | None = Field(default=None, description="Structured fields")
 
 
-def get_entity_types_from_config(config: dict[str, Any]) -> list[dict]:
-    """Extract entity types from config."""
-    return config.get("graphiti", {}).get("entity_types", [])
+async def _mcp_request(method: str, path: str, json_data: dict | None = None) -> dict:
+    """Make a request to the MCP server."""
+    settings = get_settings()
+    url = f"{settings.graphiti_mcp_url}{path}"
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        if method == "GET":
+            response = await client.get(url)
+        elif method == "POST":
+            response = await client.post(url, json=json_data)
+        elif method == "PUT":
+            response = await client.put(url, json=json_data)
+        elif method == "DELETE":
+            response = await client.delete(url)
+        else:
+            raise ValueError(f"Unknown method: {method}")
+
+        if response.status_code >= 400:
+            error_detail = response.json().get("error", response.text)
+            raise HTTPException(status_code=response.status_code, detail=error_detail)
+
+        return response.json()
 
 
-def set_entity_types_in_config(config: dict[str, Any], entity_types: list[dict]) -> dict[str, Any]:
-    """Set entity types in config."""
-    if "graphiti" not in config:
-        config["graphiti"] = {}
-    config["graphiti"]["entity_types"] = entity_types
-    return config
-
-
-@router.get("", response_model=list[EntityType])
+@router.get("")
 async def list_entity_types(current_user: CurrentUser) -> list[EntityType]:
-    """List all configured entity types."""
-    config = read_config()
-    entity_types = get_entity_types_from_config(config)
+    """List all entity types from MCP server database."""
+    data = await _mcp_request("GET", "/entity-types")
+    entity_types = data.get("entity_types", [])
     return [EntityType(**et) for et in entity_types]
 
 
@@ -57,36 +82,20 @@ async def create_entity_type(
     entity_type: EntityTypeCreate,
     current_user: CurrentUser,
 ) -> EntityType:
-    """Create a new entity type."""
-    config = read_config()
-    entity_types = get_entity_types_from_config(config)
-
-    # Check for duplicate
-    if any(et["name"] == entity_type.name for et in entity_types):
-        raise HTTPException(status_code=400, detail=f"Entity type '{entity_type.name}' already exists")
-
-    # Add new entity type
-    new_et = {"name": entity_type.name, "description": entity_type.description}
-    entity_types.append(new_et)
-
-    # Save config
-    config = set_entity_types_in_config(config, entity_types)
-    write_config(config)
-
-    return EntityType(**new_et)
+    """Create a new entity type in MCP server database."""
+    data = await _mcp_request("POST", "/entity-types", json_data={
+        "name": entity_type.name,
+        "description": entity_type.description,
+        "fields": [f.model_dump() for f in entity_type.fields],
+    })
+    return EntityType(**data)
 
 
 @router.get("/{name}", response_model=EntityType)
 async def get_entity_type(name: str, current_user: CurrentUser) -> EntityType:
-    """Get a specific entity type."""
-    config = read_config()
-    entity_types = get_entity_types_from_config(config)
-
-    for et in entity_types:
-        if et["name"] == name:
-            return EntityType(**et)
-
-    raise HTTPException(status_code=404, detail=f"Entity type '{name}' not found")
+    """Get a specific entity type from MCP server database."""
+    data = await _mcp_request("GET", f"/entity-types/{name}")
+    return EntityType(**data)
 
 
 @router.put("/{name}", response_model=EntityType)
@@ -95,33 +104,19 @@ async def update_entity_type(
     update: EntityTypeUpdate,
     current_user: CurrentUser,
 ) -> EntityType:
-    """Update an entity type."""
-    config = read_config()
-    entity_types = get_entity_types_from_config(config)
+    """Update an entity type in MCP server database."""
+    update_data = {}
+    if update.description is not None:
+        update_data["description"] = update.description
+    if update.fields is not None:
+        update_data["fields"] = [f.model_dump() for f in update.fields]
 
-    for et in entity_types:
-        if et["name"] == name:
-            et["description"] = update.description
-            config = set_entity_types_in_config(config, entity_types)
-            write_config(config)
-            return EntityType(**et)
-
-    raise HTTPException(status_code=404, detail=f"Entity type '{name}' not found")
+    data = await _mcp_request("PUT", f"/entity-types/{name}", json_data=update_data)
+    return EntityType(**data)
 
 
 @router.delete("/{name}")
 async def delete_entity_type(name: str, current_user: CurrentUser) -> dict:
-    """Delete an entity type."""
-    config = read_config()
-    entity_types = get_entity_types_from_config(config)
-
-    original_count = len(entity_types)
-    entity_types = [et for et in entity_types if et["name"] != name]
-
-    if len(entity_types) == original_count:
-        raise HTTPException(status_code=404, detail=f"Entity type '{name}' not found")
-
-    config = set_entity_types_in_config(config, entity_types)
-    write_config(config)
-
-    return {"message": f"Entity type '{name}' deleted", "restart_required": True}
+    """Delete an entity type from MCP server database."""
+    await _mcp_request("DELETE", f"/entity-types/{name}")
+    return {"message": f"Entity type '{name}' deleted"}

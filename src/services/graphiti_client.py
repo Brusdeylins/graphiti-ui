@@ -13,7 +13,7 @@ class GraphitiClient:
     def __init__(self) -> None:
         settings = get_settings()
         self.base_url = settings.graphiti_mcp_url
-        self.mcp_url = f"{self.base_url}/mcp/"
+        self.mcp_url = f"{self.base_url}/mcp"
 
     async def health_check(self) -> dict[str, Any]:
         """Check Graphiti MCP server health."""

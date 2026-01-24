@@ -98,8 +98,8 @@ def verify_admin_password(password: str) -> bool:
 def get_llm_credentials() -> dict[str, Any]:
     """Get LLM credentials from environment variables."""
     return {
-        "api_url": os.environ.get("OLLAMA_API_URL", "http://localhost:11434/v1"),
-        "api_key": os.environ.get("OLLAMA_API_KEY", ""),
+        "api_url": os.environ.get("OPENAI_API_URL", "http://localhost:11434/v1"),
+        "api_key": os.environ.get("OPENAI_API_KEY", ""),
         "model": os.environ.get("LLM_MODEL", "llama3"),
     }
 
@@ -113,8 +113,8 @@ def get_embedder_credentials() -> dict[str, Any]:
         dimensions = 768
 
     return {
-        "api_url": os.environ.get("OLLAMA_API_URL", "http://localhost:11434/v1"),
-        "api_key": os.environ.get("OLLAMA_API_KEY", ""),
+        "api_url": os.environ.get("OPENAI_API_URL", "http://localhost:11434/v1"),
+        "api_key": os.environ.get("OPENAI_API_KEY", ""),
         "model": os.environ.get("EMBEDDING_MODEL", "nomic-embed-text"),
         "dimensions": dimensions,
     }

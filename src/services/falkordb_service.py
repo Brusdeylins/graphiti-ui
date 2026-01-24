@@ -380,6 +380,7 @@ class FalkorDBClient:
         name: str | None = None,
         summary: str | None = None,
         group_id: str | None = None,
+        attributes: dict[str, str] | None = None,
     ) -> bool:
         """Update a node's properties.
 
@@ -388,6 +389,7 @@ class FalkorDBClient:
             name: Optional new name
             summary: Optional new summary
             group_id: Graph to search in (searches all if None)
+            attributes: Optional attributes to update
         """
         groups = [group_id] if group_id else self.get_group_ids()
 
@@ -409,6 +411,11 @@ class FalkorDBClient:
                 if summary is not None:
                     escaped_summary = summary.replace("'", "\\'")
                     set_parts.append(f"n.summary = '{escaped_summary}'")
+                if attributes:
+                    for key, value in attributes.items():
+                        escaped_key = key.replace("'", "\\'")
+                        escaped_value = str(value).replace("'", "\\'")
+                        set_parts.append(f"n.`{escaped_key}` = '{escaped_value}'")
 
                 if not set_parts:
                     return True  # Nothing to update

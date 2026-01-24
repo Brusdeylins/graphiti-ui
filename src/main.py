@@ -39,6 +39,7 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
         docs_url="/api/docs",
         redoc_url="/api/redoc",
+        redirect_slashes=False,  # Prevent 307 redirects on POST requests
     )
 
     # Add CORS middleware for MCP client access
