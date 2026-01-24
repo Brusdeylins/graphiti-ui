@@ -58,7 +58,7 @@ class GraphitiClient:
                 }
 
                 response = await client.post(
-                    f"{self.base_url}/mcp",
+                    f"{self.base_url}/mcp/",
                     json=payload,
                     headers={"Content-Type": "application/json"},
                     follow_redirects=True,
@@ -167,16 +167,29 @@ class GraphitiClient:
             source_description: Description of where this came from
             group_id: Graph/group to add to
         """
-        arguments = {
-            "name": name,
-            "episode_body": content,
-            "source": source,
-            "source_description": source_description,
-        }
-        if group_id:
-            arguments["group_id"] = group_id
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                payload = {
+                    "name": name,
+                    "episode_body": content,
+                    "source": source,
+                    "source_description": source_description,
+                }
+                if group_id:
+                    payload["group_id"] = group_id
 
-        return await self.call_tool("add_episode", arguments)
+                response = await client.post(
+                    f"{self.base_url}/episode",
+                    json=payload,
+                    headers={"Content-Type": "application/json"},
+                )
+
+                if response.status_code == 200:
+                    return response.json()
+                return {"success": False, "error": f"HTTP {response.status_code}"}
+
+        except Exception as e:
+            return {"success": False, "error": str(e)}
 
     async def delete_entity_node(self, uuid: str) -> dict:
         """Delete an entity node from the knowledge graph.
@@ -184,7 +197,14 @@ class GraphitiClient:
         Args:
             uuid: UUID of the entity to delete
         """
-        return await self.call_tool("delete_entity_node", {"uuid": uuid})
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.delete(f"{self.base_url}/entity/{uuid}")
+                if response.status_code == 200:
+                    return response.json()
+                return {"success": False, "error": f"HTTP {response.status_code}"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
 
     async def delete_entity_edge(self, uuid: str) -> dict:
         """Delete an entity edge (relationship) from the knowledge graph.
@@ -192,7 +212,68 @@ class GraphitiClient:
         Args:
             uuid: UUID of the edge to delete
         """
-        return await self.call_tool("delete_entity_edge", {"uuid": uuid})
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.delete(f"{self.base_url}/edge/{uuid}")
+                if response.status_code == 200:
+                    return response.json()
+                return {"success": False, "error": f"HTTP {response.status_code}"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    async def update_entity_node(self, uuid: str, name: str | None = None, summary: str | None = None) -> dict:
+        """Update an entity node in the knowledge graph.
+
+        Args:
+            uuid: UUID of the entity to update
+            name: New name (optional)
+            summary: New summary (optional)
+        """
+        try:
+            payload = {}
+            if name is not None:
+                payload["name"] = name
+            if summary is not None:
+                payload["summary"] = summary
+
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.put(
+                    f"{self.base_url}/entity/{uuid}",
+                    json=payload,
+                    headers={"Content-Type": "application/json"},
+                )
+                if response.status_code == 200:
+                    return response.json()
+                return {"success": False, "error": f"HTTP {response.status_code}"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    async def update_entity_edge(self, uuid: str, name: str | None = None, fact: str | None = None) -> dict:
+        """Update an entity edge in the knowledge graph.
+
+        Args:
+            uuid: UUID of the edge to update
+            name: New name/type (optional)
+            fact: New fact (optional)
+        """
+        try:
+            payload = {}
+            if name is not None:
+                payload["name"] = name
+            if fact is not None:
+                payload["fact"] = fact
+
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.put(
+                    f"{self.base_url}/edge/{uuid}",
+                    json=payload,
+                    headers={"Content-Type": "application/json"},
+                )
+                if response.status_code == 200:
+                    return response.json()
+                return {"success": False, "error": f"HTTP {response.status_code}"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
 
 
 # Global client instance

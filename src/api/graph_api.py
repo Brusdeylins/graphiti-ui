@@ -401,39 +401,15 @@ async def create_edge(request: CreateEdgeRequest, current_user: CurrentUser) -> 
 
 @router.put("/node/{uuid}")
 async def update_node(uuid: str, request: UpdateNodeRequest, current_user: CurrentUser) -> dict:
-    """Update a node's properties directly in FalkorDB and regenerate embedding."""
+    """Update a node's properties via REST API (includes embedding regeneration)."""
     try:
-        client = get_falkordb_client()
-        success = client.update_node(
+        graphiti = get_graphiti_client()
+        result = await graphiti.update_entity_node(
             uuid=uuid,
             name=request.name,
             summary=request.summary,
-            group_id=request.group_id,
-            attributes=request.attributes if hasattr(request, 'attributes') else None,
         )
-
-        if not success:
-            return {"success": False, "error": "Node not found or update failed"}
-
-        # Regenerate embedding via MCP server
-        settings = get_settings()
-        embedding_regenerated = False
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as http_client:
-                response = await http_client.post(
-                    f"{settings.graphiti_mcp_url}/node/{uuid}/regenerate-embedding"
-                )
-                if response.status_code == 200:
-                    embedding_regenerated = True
-        except Exception as e:
-            # Log but don't fail - embedding regeneration is optional
-            print(f"Warning: Failed to regenerate embedding: {e}")
-
-        return {
-            "success": True,
-            "message": "Node updated successfully",
-            "embedding_regenerated": embedding_regenerated,
-        }
+        return result
 
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -441,38 +417,15 @@ async def update_node(uuid: str, request: UpdateNodeRequest, current_user: Curre
 
 @router.put("/edge/{uuid}")
 async def update_edge(uuid: str, request: UpdateEdgeRequest, current_user: CurrentUser) -> dict:
-    """Update an edge's properties directly in FalkorDB and regenerate embedding."""
+    """Update an edge's properties via REST API (includes embedding regeneration)."""
     try:
-        client = get_falkordb_client()
-        success = client.update_edge(
+        graphiti = get_graphiti_client()
+        result = await graphiti.update_entity_edge(
             uuid=uuid,
             name=request.name,
             fact=request.fact,
-            group_id=request.group_id,
         )
-
-        if not success:
-            return {"success": False, "error": "Edge not found or update failed"}
-
-        # Regenerate embedding via MCP server
-        settings = get_settings()
-        embedding_regenerated = False
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as http_client:
-                response = await http_client.post(
-                    f"{settings.graphiti_mcp_url}/edge/{uuid}/regenerate-embedding"
-                )
-                if response.status_code == 200:
-                    embedding_regenerated = True
-        except Exception as e:
-            # Log but don't fail - embedding regeneration is optional
-            print(f"Warning: Failed to regenerate embedding: {e}")
-
-        return {
-            "success": True,
-            "message": "Edge updated successfully",
-            "embedding_regenerated": embedding_regenerated,
-        }
+        return result
 
     except Exception as e:
         return {"success": False, "error": str(e)}

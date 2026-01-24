@@ -1295,17 +1295,18 @@ export function VisualizationPage() {
                 <kbd>Shift</kbd>+Drag to link nodes
               </div>
             )}
-            <div className="col-auto ms-auto">
-              <button
-                onClick={openCreateNodeModal}
-                disabled={!selectedGroup}
-                className="btn btn-sm btn-primary"
-                title={selectedGroup ? 'Create new entity' : 'Select a group first'}
-              >
-                <IconPlus size={16} className="me-1" />
-                Node
-              </button>
-            </div>
+            {selectedGroup && (
+              <div className="col-auto ms-auto">
+                <button
+                  onClick={openCreateNodeModal}
+                  className="btn btn-sm btn-primary"
+                  title="Create new entity"
+                >
+                  <IconPlus size={16} className="me-1" />
+                  Node
+                </button>
+              </div>
+            )}
             {selectedGroup && (
               <div className="col-auto">
                 <button
