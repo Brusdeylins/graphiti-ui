@@ -91,6 +91,13 @@ async def create_entity_type(
     return EntityType(**data)
 
 
+@router.post("/reset")
+async def reset_entity_types(current_user: CurrentUser) -> dict:
+    """Reset entity types to config defaults."""
+    data = await _mcp_request("POST", "/entity-types/reset")
+    return data
+
+
 @router.get("/{name}", response_model=EntityType)
 async def get_entity_type(name: str, current_user: CurrentUser) -> EntityType:
     """Get a specific entity type from MCP server database."""
