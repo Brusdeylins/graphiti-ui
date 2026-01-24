@@ -113,6 +113,14 @@ export function EntityTypesPage() {
     setFormFields(formFields.filter((_, i) => i !== index));
   };
 
+  // Check if a field name is protected
+  const isProtectedFieldName = (name: string): boolean => {
+    return PROTECTED_FIELD_NAMES.has(name.toLowerCase().trim());
+  };
+
+  // Check if any field has a protected name
+  const hasProtectedFields = formFields.some(f => f.name.trim() && isProtectedFieldName(f.name));
+
   const handleSave = async () => {
     if (!formName.trim() || !formDescription.trim()) {
       setError('Name and description are required');
@@ -121,14 +129,6 @@ export function EntityTypesPage() {
 
     // Validate fields
     const validFields = formFields.filter(f => f.name.trim());
-
-    // Check for protected field names
-    const protectedFields = validFields.filter(f => PROTECTED_FIELD_NAMES.has(f.name.toLowerCase()));
-    if (protectedFields.length > 0) {
-      const names = protectedFields.map(f => `"${f.name}"`).join(', ');
-      setError(`Reserved field name(s): ${names}. These are internal Graphiti attributes.`);
-      return;
-    }
 
     setIsSaving(true);
     setError(null);
@@ -401,11 +401,14 @@ export function EntityTypesPage() {
                             <div className="col-3">
                               <input
                                 type="text"
-                                className="form-control form-control-sm"
+                                className={`form-control form-control-sm ${field.name.trim() && isProtectedFieldName(field.name) ? 'is-invalid' : ''}`}
                                 placeholder="Field name"
                                 value={field.name}
                                 onChange={e => updateField(index, { name: e.target.value })}
                               />
+                              {field.name.trim() && isProtectedFieldName(field.name) && (
+                                <div className="invalid-feedback">Reserved name</div>
+                              )}
                             </div>
                             <div className="col-2">
                               <select
@@ -460,7 +463,7 @@ export function EntityTypesPage() {
                 <button
                   className="btn btn-primary"
                   onClick={handleSave}
-                  disabled={isSaving || !formName.trim() || !formDescription.trim()}
+                  disabled={isSaving || !formName.trim() || !formDescription.trim() || hasProtectedFields}
                 >
                   {isSaving ? (
                     <>
