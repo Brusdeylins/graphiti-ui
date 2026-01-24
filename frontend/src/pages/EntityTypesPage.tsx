@@ -20,6 +20,12 @@ interface EntityType {
 
 const FIELD_TYPES = ['str', 'int', 'float', 'bool'];
 
+// Protected field names that conflict with Graphiti's internal EntityNode attributes
+const PROTECTED_FIELD_NAMES = new Set([
+  'name', 'summary', 'uuid', 'created_at', 'group_id',
+  'labels', 'attributes', 'name_embedding', 'summary_embedding',
+]);
+
 export function EntityTypesPage() {
   const [entityTypes, setEntityTypes] = useState<EntityType[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -115,6 +121,14 @@ export function EntityTypesPage() {
 
     // Validate fields
     const validFields = formFields.filter(f => f.name.trim());
+
+    // Check for protected field names
+    const protectedFields = validFields.filter(f => PROTECTED_FIELD_NAMES.has(f.name.toLowerCase()));
+    if (protectedFields.length > 0) {
+      const names = protectedFields.map(f => `"${f.name}"`).join(', ');
+      setError(`Reserved field name(s): ${names}. These are internal Graphiti attributes.`);
+      return;
+    }
 
     setIsSaving(true);
     setError(null);
