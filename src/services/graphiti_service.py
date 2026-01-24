@@ -275,6 +275,104 @@ class GraphitiClient:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    async def create_entity_direct(
+        self,
+        name: str,
+        entity_type: str = "Entity",
+        summary: str = "",
+        group_id: str | None = None,
+        attributes: dict[str, str] | None = None,
+    ) -> dict:
+        """Create an entity node directly without LLM processing.
+
+        Args:
+            name: Entity name
+            entity_type: Type label (e.g., Person, Organization)
+            summary: Entity description
+            group_id: Graph/group to add to
+            attributes: Optional structured attributes
+        """
+        try:
+            payload = {
+                "name": name,
+                "entity_type": entity_type,
+                "summary": summary,
+            }
+            if group_id:
+                payload["group_id"] = group_id
+            if attributes:
+                payload["attributes"] = attributes
+
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    f"{self.base_url}/entity",
+                    json=payload,
+                    headers={"Content-Type": "application/json"},
+                )
+                if response.status_code == 200:
+                    return response.json()
+                return {"success": False, "error": f"HTTP {response.status_code}"}
+
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    async def create_edge_direct(
+        self,
+        source_uuid: str,
+        target_uuid: str,
+        name: str,
+        fact: str = "",
+        group_id: str | None = None,
+    ) -> dict:
+        """Create an edge directly without LLM processing.
+
+        Args:
+            source_uuid: UUID of source node
+            target_uuid: UUID of target node
+            name: Relationship type (e.g., WORKS_AT)
+            fact: Description of the relationship
+            group_id: Graph/group to add to
+        """
+        try:
+            payload = {
+                "source_uuid": source_uuid,
+                "target_uuid": target_uuid,
+                "name": name,
+                "fact": fact,
+            }
+            if group_id:
+                payload["group_id"] = group_id
+
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    f"{self.base_url}/edge",
+                    json=payload,
+                    headers={"Content-Type": "application/json"},
+                )
+                if response.status_code == 200:
+                    return response.json()
+                return {"success": False, "error": f"HTTP {response.status_code}"}
+
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    async def send_knowledge(self, content: str, group_id: str | None = None) -> dict:
+        """Send knowledge text to LLM for extraction.
+
+        The LLM will analyze the text and extract entities/relationships.
+
+        Args:
+            content: Free-form text for LLM to process
+            group_id: Graph/group to add extracted data to
+        """
+        return await self.add_episode(
+            name="Knowledge Input",
+            content=content,
+            source="text",
+            source_description="Manual knowledge input via UI",
+            group_id=group_id,
+        )
+
 
 # Global client instance
 _client: GraphitiClient | None = None

@@ -292,22 +292,30 @@ async def get_graph_stats(current_user: CurrentUser) -> dict:
 # ============================================
 
 
-class CreateNodeRequest(BaseModel):
-    """Request to create a new node via episode."""
+class CreateNodeDirectRequest(BaseModel):
+    """Request to create a node directly (no LLM)."""
 
     name: str
     entity_type: str = "Entity"
     summary: str = ""
     group_id: str
+    attributes: dict[str, str] | None = None
 
 
-class CreateEdgeRequest(BaseModel):
-    """Request to create a new edge via episode."""
+class CreateEdgeDirectRequest(BaseModel):
+    """Request to create an edge directly (no LLM)."""
 
-    source_name: str
-    target_name: str
+    source_uuid: str
+    target_uuid: str
     relationship_type: str
     fact: str = ""
+    group_id: str
+
+
+class SendKnowledgeRequest(BaseModel):
+    """Request to send knowledge to LLM for extraction."""
+
+    content: str
     group_id: str
 
 
@@ -328,35 +336,28 @@ class UpdateEdgeRequest(BaseModel):
     group_id: str | None = None
 
 
-@router.post("/node")
-async def create_node(request: CreateNodeRequest, current_user: CurrentUser) -> dict:
-    """Create a new node via add_episode.
+@router.post("/node/direct")
+async def create_node_direct(request: CreateNodeDirectRequest, current_user: CurrentUser) -> dict:
+    """Create a new node directly without LLM processing.
 
-    Uses the MCP add_episode tool to create an entity. The LLM will extract
-    the entity from the episode content and create proper embeddings.
+    Creates the entity exactly as specified with embeddings only.
     """
     try:
         graphiti = get_graphiti_client()
-
-        # Craft episode content that describes the entity
-        entity_type_text = f"({request.entity_type})" if request.entity_type != "Entity" else ""
-        episode_content = f"New entity: {request.name} {entity_type_text}."
-        if request.summary:
-            episode_content += f" Description: {request.summary}"
-
-        result = await graphiti.add_episode(
-            name=f"Manual: Create Entity '{request.name}'",
-            content=episode_content,
-            source="text",
-            source_description="Manual graph edit via UI",
+        result = await graphiti.create_entity_direct(
+            name=request.name,
+            entity_type=request.entity_type,
+            summary=request.summary,
             group_id=request.group_id,
+            attributes=request.attributes,
         )
 
         if result.get("success"):
             return {
                 "success": True,
-                "message": f"Entity '{request.name}' creation initiated",
-                "data": result.get("data"),
+                "message": f"Entity '{request.name}' created",
+                "uuid": result.get("uuid"),
+                "data": result,
             }
         return {"success": False, "error": result.get("error", "Unknown error")}
 
@@ -364,33 +365,53 @@ async def create_node(request: CreateNodeRequest, current_user: CurrentUser) -> 
         return {"success": False, "error": str(e)}
 
 
-@router.post("/edge")
-async def create_edge(request: CreateEdgeRequest, current_user: CurrentUser) -> dict:
-    """Create a new edge via add_episode.
+@router.post("/edge/direct")
+async def create_edge_direct(request: CreateEdgeDirectRequest, current_user: CurrentUser) -> dict:
+    """Create a new edge directly without LLM processing.
 
-    Uses the MCP add_episode tool to create a relationship. The LLM will extract
-    the relationship from the episode content and create proper embeddings.
+    Creates the relationship exactly as specified with embeddings only.
     """
     try:
         graphiti = get_graphiti_client()
-
-        # Craft episode content that describes the relationship
-        episode_content = f"{request.source_name} {request.relationship_type} {request.target_name}."
-        if request.fact:
-            episode_content += f" {request.fact}"
-
-        result = await graphiti.add_episode(
-            name=f"Manual: Create Relationship '{request.source_name}' -> '{request.target_name}'",
-            content=episode_content,
-            source="text",
-            source_description="Manual graph edit via UI",
+        result = await graphiti.create_edge_direct(
+            source_uuid=request.source_uuid,
+            target_uuid=request.target_uuid,
+            name=request.relationship_type,
+            fact=request.fact,
             group_id=request.group_id,
         )
 
         if result.get("success"):
             return {
                 "success": True,
-                "message": f"Relationship '{request.relationship_type}' creation initiated",
+                "message": f"Relationship '{request.relationship_type}' created",
+                "uuid": result.get("uuid"),
+                "data": result,
+            }
+        return {"success": False, "error": result.get("error", "Unknown error")}
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@router.post("/knowledge")
+async def send_knowledge(request: SendKnowledgeRequest, current_user: CurrentUser) -> dict:
+    """Send knowledge to LLM for extraction.
+
+    The LLM will analyze the text and extract entities and relationships.
+    Results appear asynchronously after processing.
+    """
+    try:
+        graphiti = get_graphiti_client()
+        result = await graphiti.send_knowledge(
+            content=request.content,
+            group_id=request.group_id,
+        )
+
+        if result.get("success"):
+            return {
+                "success": True,
+                "message": "Knowledge submitted for LLM processing",
                 "data": result.get("data"),
             }
         return {"success": False, "error": result.get("error", "Unknown error")}

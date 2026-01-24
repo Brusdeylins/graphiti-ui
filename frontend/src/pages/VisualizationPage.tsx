@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import * as d3 from 'd3';
 import { api } from '../api/client';
 import { useTheme } from '../contexts/ThemeContext';
-import { IconRefresh, IconTrash, IconPlus, IconEdit, IconX, IconCheck, IconTrashX, IconAdjustments, IconAlertTriangle } from '@tabler/icons-react';
+import { IconRefresh, IconTrash, IconPlus, IconEdit, IconX, IconCheck, IconTrashX, IconAdjustments, IconAlertTriangle, IconBrain, IconLink } from '@tabler/icons-react';
 
 interface Node {
   id: string;
@@ -132,6 +132,8 @@ export function VisualizationPage() {
   // Graph Editor state
   const [showCreateNodeModal, setShowCreateNodeModal] = useState(false);
   const [showCreateEdgeModal, setShowCreateEdgeModal] = useState(false);
+  const [showSendKnowledgeModal, setShowSendKnowledgeModal] = useState(false);
+  const [knowledgeContent, setKnowledgeContent] = useState('');
   const [isEditingNode, setIsEditingNode] = useState(false);
   const [isEditingEdge, setIsEditingEdge] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -454,12 +456,20 @@ export function VisualizationPage() {
 
     setIsSaving(true);
     try {
-      const response = await api.post('/graph/node', {
+      // Filter out empty attributes
+      const filteredAttrs: Record<string, string> = {};
+      Object.entries(nodeAttributes).forEach(([key, value]) => {
+        if (value && value.trim()) {
+          filteredAttrs[key] = value.trim();
+        }
+      });
+
+      const response = await api.post('/graph/node/direct', {
         name: newNodeName.trim(),
         entity_type: newNodeType.trim() || 'Entity',
         summary: newNodeSummary.trim(),
         group_id: selectedGroup,
-        attributes: Object.keys(nodeAttributes).length > 0 ? nodeAttributes : undefined,
+        attributes: Object.keys(filteredAttrs).length > 0 ? filteredAttrs : undefined,
       });
 
       if (response.data.success) {
@@ -469,8 +479,8 @@ export function VisualizationPage() {
         setNewNodeSummary('');
         setSelectedEntityType(null);
         setNodeAttributes({});
-        // Refresh graph after short delay to allow episode processing
-        setTimeout(refreshGraph, 1500);
+        // Refresh graph immediately - direct creation is instant
+        refreshGraph();
       } else {
         setAlertMessage({ type: 'error', title: 'Create Failed', message: response.data.error });
       }
@@ -489,9 +499,9 @@ export function VisualizationPage() {
 
     setIsSaving(true);
     try {
-      const response = await api.post('/graph/edge', {
-        source_name: edgeSourceNode.name,
-        target_name: edgeTargetNode.name,
+      const response = await api.post('/graph/edge/direct', {
+        source_uuid: edgeSourceNode.id,
+        target_uuid: edgeTargetNode.id,
         relationship_type: newEdgeType.trim().toUpperCase().replace(/\s+/g, '_'),
         fact: newEdgeFact.trim(),
         group_id: selectedGroup,
@@ -503,10 +513,43 @@ export function VisualizationPage() {
         setEdgeTargetNode(null);
         setNewEdgeType('');
         setNewEdgeFact('');
-        // Refresh graph after short delay to allow episode processing
-        setTimeout(refreshGraph, 1500);
+        // Refresh graph immediately - direct creation is instant
+        refreshGraph();
       } else {
         setAlertMessage({ type: 'error', title: 'Create Failed', message: response.data.error });
+      }
+    } catch (err: any) {
+      setAlertMessage({ type: 'error', title: 'Error', message: err.message });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleSendKnowledge = async () => {
+    if (!knowledgeContent.trim() || !selectedGroup) {
+      setAlertMessage({ type: 'error', title: 'Missing Data', message: 'Please enter knowledge text and select a group' });
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      const response = await api.post('/graph/knowledge', {
+        content: knowledgeContent.trim(),
+        group_id: selectedGroup,
+      });
+
+      if (response.data.success) {
+        setShowSendKnowledgeModal(false);
+        setKnowledgeContent('');
+        setAlertMessage({
+          type: 'info',
+          title: 'Knowledge Submitted',
+          message: 'The LLM is processing your input. New nodes/edges will appear after processing completes.',
+        });
+        // Refresh graph after delay for LLM processing
+        setTimeout(refreshGraph, 3000);
+      } else {
+        setAlertMessage({ type: 'error', title: 'Submit Failed', message: response.data.error });
       }
     } catch (err: any) {
       setAlertMessage({ type: 'error', title: 'Error', message: err.message });
@@ -1308,14 +1351,30 @@ export function VisualizationPage() {
               </div>
             )}
             {selectedGroup && (
-              <div className="col-auto ms-auto">
+              <div className="col-auto ms-auto d-flex gap-2">
                 <button
                   onClick={openCreateNodeModal}
                   className="btn btn-sm btn-primary"
-                  title="Create new entity"
+                  title="Create new entity (direct, no LLM)"
                 >
                   <IconPlus size={16} className="me-1" />
                   Node
+                </button>
+                <button
+                  onClick={() => setShowCreateEdgeModal(true)}
+                  className="btn btn-sm btn-primary"
+                  title="Create relationship (direct, no LLM)"
+                >
+                  <IconLink size={16} className="me-1" />
+                  Edge
+                </button>
+                <button
+                  onClick={() => setShowSendKnowledgeModal(true)}
+                  className="btn btn-sm btn-outline-primary"
+                  title="Send knowledge text to LLM for extraction"
+                >
+                  <IconBrain size={16} className="me-1" />
+                  Send Knowledge
                 </button>
               </div>
             )}
@@ -2074,13 +2133,13 @@ export function VisualizationPage() {
                 )}
 
                 <div className="mb-3">
-                  <label className="form-label">Initial Description For LLM</label>
+                  <label className="form-label">Summary</label>
                   <textarea
                     className="form-control"
                     rows={3}
                     value={newNodeSummary}
                     onChange={e => setNewNodeSummary(e.target.value)}
-                    placeholder="Describe the entity - LLM will extract and summarize..."
+                    placeholder="Brief description of this entity..."
                   />
                 </div>
                 <div className="mb-0">
@@ -2190,13 +2249,13 @@ export function VisualizationPage() {
                 </div>
 
                 <div className="mb-0">
-                  <label className="form-label">Fact Description For LLM</label>
+                  <label className="form-label">Fact Description</label>
                   <textarea
                     className="form-control"
                     rows={3}
                     value={newEdgeFact}
                     onChange={e => setNewEdgeFact(e.target.value)}
-                    placeholder="Describe the relationship - LLM will extract and summarize..."
+                    placeholder="Describe the relationship (e.g., 'John has worked at Acme since 2020')..."
                   />
                 </div>
               </div>
@@ -2215,6 +2274,75 @@ export function VisualizationPage() {
                   disabled={isSaving || !edgeSourceNode || !edgeTargetNode || !newEdgeType.trim()}
                 >
                   {isSaving ? 'Creating...' : 'Create'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Send Knowledge Modal */}
+      {showSendKnowledgeModal && (
+        <div className="modal modal-blur fade show d-block" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <div className="modal-dialog modal-lg modal-dialog-centered">
+            <div className="modal-content">
+              <div className="modal-header">
+                <h5 className="modal-title">
+                  <IconBrain size={20} className="me-2" />
+                  Send Knowledge to LLM
+                </h5>
+                <button type="button" className="btn-close" onClick={() => setShowSendKnowledgeModal(false)} />
+              </div>
+              <div className="modal-body">
+                <div className="alert alert-info mb-3">
+                  <strong>LLM Mode:</strong> The AI will analyze your text and automatically extract entities and relationships.
+                  Results will appear after processing (may take a few seconds).
+                </div>
+                <div className="mb-3">
+                  <label className="form-label required">Knowledge Text</label>
+                  <textarea
+                    className="form-control"
+                    rows={10}
+                    value={knowledgeContent}
+                    onChange={e => setKnowledgeContent(e.target.value)}
+                    placeholder="Enter free-form text describing people, organizations, relationships, events, etc.
+
+Example:
+John Smith is a software engineer at Acme Corp. He has been working there since 2020 and leads the backend team. Acme Corp is headquartered in San Francisco and was founded by Jane Doe in 2015."
+                    autoFocus
+                  />
+                </div>
+                <div className="mb-0">
+                  <label className="form-label">Target Graph</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    value={selectedGroup}
+                    disabled
+                  />
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-secondary" onClick={() => setShowSendKnowledgeModal(false)}>
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={handleSendKnowledge}
+                  disabled={isSaving || !knowledgeContent.trim()}
+                >
+                  {isSaving ? (
+                    <>
+                      <span className="spinner-border spinner-border-sm me-2" />
+                      Sending...
+                    </>
+                  ) : (
+                    <>
+                      <IconBrain size={16} className="me-1" />
+                      Send to LLM
+                    </>
+                  )}
                 </button>
               </div>
             </div>
