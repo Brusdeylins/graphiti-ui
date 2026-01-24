@@ -97,6 +97,7 @@ export function VisualizationPage() {
   const [highlightedNodes, setHighlightedNodes] = useState<Set<string>>(new Set());
   const [highlightedEdges, setHighlightedEdges] = useState<Set<number>>(new Set());
   const [limit, setLimit] = useState(500);
+  const [refreshKey, setRefreshKey] = useState(0);
   const [groups, setGroups] = useState<string[]>([]);
   const [selectedGroup, setSelectedGroup] = useState<string>('');
   const [isDeleting, setIsDeleting] = useState(false);
@@ -404,8 +405,8 @@ export function VisualizationPage() {
   // ============================================
 
   const refreshGraph = useCallback(() => {
-    // Trigger data reload by changing limit (a simple way to force refresh)
-    setLimit(prev => prev);
+    // Trigger data reload by incrementing refresh key
+    setRefreshKey(prev => prev + 1);
   }, []);
 
   const openCreateNodeModal = async () => {
@@ -757,7 +758,7 @@ export function VisualizationPage() {
       }
     };
     fetchData();
-  }, [limit, selectedGroup]);
+  }, [limit, selectedGroup, refreshKey]);
 
   useEffect(() => {
     if (!graphData || !svgRef.current || !containerRef.current) return;
