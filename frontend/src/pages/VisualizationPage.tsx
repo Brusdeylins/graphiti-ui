@@ -980,12 +980,9 @@ export function VisualizationPage() {
             </div>
             <div className="col-auto d-flex align-items-center gap-2">
               {graphData && (
-                <>
-                  <span className={graphData.nodes.length >= limit ? 'text-danger fw-bold' : 'text-secondary'}>
-                    {graphData.nodes.length} Nodes
-                  </span>
-                  <span className="text-secondary">• {graphData.edges.length} Edges</span>
-                </>
+                <span className={graphData.nodes.length >= limit ? 'text-danger fw-bold' : 'text-secondary'}>
+                  {graphData.nodes.length} Nodes • {graphData.edges.length} Edges
+                </span>
               )}
               {(queueStatus?.currently_processing ?? 0) > 0 && (
                 <IconLoader2 size={16} className="text-warning spin" title="Processing queue active" />
