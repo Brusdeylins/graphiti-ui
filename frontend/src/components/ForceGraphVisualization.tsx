@@ -460,15 +460,31 @@ export function ForceGraphVisualization({
       const dz = end.z - start.z;
       const len = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
 
-      // Perpendicular vector (cross product with up vector [0,1,0])
-      const perpX = -dz / len;
-      const perpZ = dx / len;
+      // react-force-graph-3d curves bend perpendicular to link in a plane
+      // Cross product of link direction with Z-axis [0,0,1] gives horizontal perpendicular
+      // Cross: (dx,dy,dz) × (0,0,1) = (dy*1 - dz*0, dz*0 - dx*1, dx*0 - dy*0) = (dy, -dx, 0)
+      let perpX = dy;
+      let perpY = -dx;
+      let perpZ = 0;
+
+      // Normalize the perpendicular vector
+      const perpLen = Math.sqrt(perpX * perpX + perpY * perpY) || 1;
+      perpX /= perpLen;
+      perpY /= perpLen;
+
+      // If link is nearly vertical (perpLen small), use different reference
+      if (perpLen < 0.1) {
+        // Cross with X-axis instead: (dx,dy,dz) × (1,0,0) = (0, dz, -dy)
+        perpX = 0;
+        perpY = dz / len;
+        perpZ = -dy / len;
+      }
 
       // Offset magnitude based on curvature and distance
       const offset = curvature * len * 0.25;
 
       sprite.position.x = midX + perpX * offset;
-      sprite.position.y = midY;
+      sprite.position.y = midY + perpY * offset;
       sprite.position.z = midZ + perpZ * offset;
     } else {
       sprite.position.x = midX;
