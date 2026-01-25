@@ -212,14 +212,15 @@ export function VisualizationPage() {
       return;
     }
 
-    // Set the new group ID - graph will be created when first node/edge is added
+    // Add to groups list and select it
+    setGroups(prev => [...prev, trimmedId].sort());
     setSelectedGroup(trimmedId);
     setShowCreateGraphModal(false);
     setNewGraphId('');
     setAlertMessage({
       type: 'info',
-      title: 'New Graph Selected',
-      message: `Graph "${trimmedId}" is ready. Add nodes or edges to create it.`,
+      title: 'New Graph Created',
+      message: `Graph "${trimmedId}" is ready. Add nodes or edges to populate it.`,
     });
   };
 
