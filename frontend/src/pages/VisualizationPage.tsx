@@ -161,13 +161,21 @@ export function VisualizationPage() {
           const wasProcessing = prevProcessingRef.current > 0;
           const isNowIdle = newStatus.currently_processing === 0;
 
-          // Auto-refresh graph when queue finishes processing
+          // Auto-refresh graph when queue finishes processing (busy -> idle)
           if (wasProcessing && isNowIdle) {
             setRefreshKey(k => k + 1);
           }
 
           prevProcessingRef.current = newStatus.currently_processing;
-          setQueueStatus(newStatus);
+
+          // Only update state if values actually changed to avoid re-renders
+          setQueueStatus(prev => {
+            if (prev?.total_pending === newStatus.total_pending &&
+                prev?.currently_processing === newStatus.currently_processing) {
+              return prev; // No change, return same reference
+            }
+            return newStatus;
+          });
         }
       } catch {
         // Silently ignore polling errors
@@ -234,6 +242,15 @@ export function VisualizationPage() {
     });
     return colors;
   }, [nodeTypes]);
+
+  // Memoize graph data for ForceGraph to prevent unnecessary simulation restarts
+  const forceGraphData = useMemo(() => {
+    if (!graphData) return null;
+    return {
+      nodes: graphData.nodes as GraphNode[],
+      links: graphData.edges.map((e, i) => ({ ...e, index: i })) as GraphEdge[],
+    };
+  }, [graphData]);
 
   const handleCreateGraph = () => {
     const trimmedId = newGraphId.trim();
@@ -984,19 +1001,14 @@ export function VisualizationPage() {
         )}
 
         {/* Force Graph Visualization */}
-        {graphData && (
+        {forceGraphData && (
           <ForceGraphVisualization
-            graphData={{
-              nodes: graphData.nodes as GraphNode[],
-              links: graphData.edges.map((e, i) => ({ ...e, index: i })) as GraphEdge[],
-            }}
-            onNodeClick={(node) => handleNodeClick(node as Node, graphData.edges)}
+            graphData={forceGraphData}
+            onNodeClick={(node) => handleNodeClick(node as Node, graphData!.edges)}
             onEdgeClick={(edge) => handleEdgeClick(edge as Edge, edge.index || 0)}
             onBackgroundClick={clearSelection}
             highlightedNodes={highlightedNodes}
             highlightedEdges={highlightedEdges}
-            selectedNode={selectedNode as GraphNode | null}
-            selectedEdge={selectedEdge as GraphEdge | null}
             linkDistance={linkDistance}
             chargeStrength={chargeStrength}
             nodeSize={nodeSize}
