@@ -166,6 +166,10 @@ export function VisualizationPage() {
   const [showDeleteEdgeConfirm, setShowDeleteEdgeConfirm] = useState(false);
   const [alertMessage, setAlertMessage] = useState<{ type: 'error' | 'success' | 'info'; title: string; message: string } | null>(null);
 
+  // Create graph modal state
+  const [showCreateGraphModal, setShowCreateGraphModal] = useState(false);
+  const [newGraphId, setNewGraphId] = useState('');
+
   // Refs for D3 selections to update highlighting without re-running simulation
   const nodeSelectionRef = useRef<d3.Selection<SVGGElement, Node, SVGGElement, unknown> | null>(null);
   const linkSelectionRef = useRef<d3.Selection<SVGPathElement, Edge, SVGGElement, unknown> | null>(null);
@@ -195,6 +199,29 @@ export function VisualizationPage() {
     });
     return colors;
   }, [nodeTypes]);
+
+  const handleCreateGraph = () => {
+    const trimmedId = newGraphId.trim();
+    if (!trimmedId) return;
+
+    // Check if graph already exists
+    if (groups.includes(trimmedId)) {
+      setSelectedGroup(trimmedId);
+      setShowCreateGraphModal(false);
+      setNewGraphId('');
+      return;
+    }
+
+    // Set the new group ID - graph will be created when first node/edge is added
+    setSelectedGroup(trimmedId);
+    setShowCreateGraphModal(false);
+    setNewGraphId('');
+    setAlertMessage({
+      type: 'info',
+      title: 'New Graph Selected',
+      message: `Graph "${trimmedId}" is ready. Add nodes or edges to create it.`,
+    });
+  };
 
   const handleDeleteGraph = async () => {
     if (!selectedGroup) return;
@@ -1342,15 +1369,13 @@ export function VisualizationPage() {
                     <option key={g} value={g}>{g}</option>
                   ))}
                 </select>
-                <input
-                  type="text"
-                  className="form-control form-control-sm"
-                  placeholder="New graph..."
-                  style={{ maxWidth: '120px' }}
-                  value={!groups.includes(selectedGroup) && selectedGroup ? selectedGroup : ''}
-                  onChange={e => setSelectedGroup(e.target.value)}
-                  title="Type a new graph name to create it"
-                />
+                <button
+                  className="btn btn-sm btn-outline-primary"
+                  onClick={() => setShowCreateGraphModal(true)}
+                  title="Create new graph"
+                >
+                  <IconPlus size={16} />
+                </button>
               </div>
             </div>
             <div className="col-auto">
@@ -2380,6 +2405,58 @@ John Smith is a software engineer at Acme Corp. He has been working there since 
                       Send to LLM
                     </>
                   )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Create Graph Modal */}
+      {showCreateGraphModal && (
+        <div className="modal modal-blur show d-block" tabIndex={-1} style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <div className="modal-dialog modal-sm modal-dialog-centered">
+            <div className="modal-content">
+              <div className="modal-header">
+                <h5 className="modal-title">Create New Graph</h5>
+                <button
+                  type="button"
+                  className="btn-close"
+                  onClick={() => { setShowCreateGraphModal(false); setNewGraphId(''); }}
+                />
+              </div>
+              <div className="modal-body">
+                <div className="mb-3">
+                  <label className="form-label">Graph ID</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="e.g. my-project, user-123"
+                    value={newGraphId}
+                    onChange={e => setNewGraphId(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && handleCreateGraph()}
+                    autoFocus
+                  />
+                  <div className="form-text">
+                    {groups.includes(newGraphId.trim())
+                      ? <span className="text-warning">Graph exists - will be selected</span>
+                      : 'Graph will be created when you add nodes or edges'}
+                  </div>
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button
+                  className="btn"
+                  onClick={() => { setShowCreateGraphModal(false); setNewGraphId(''); }}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="btn btn-primary"
+                  onClick={handleCreateGraph}
+                  disabled={!newGraphId.trim()}
+                >
+                  {groups.includes(newGraphId.trim()) ? 'Select Graph' : 'Create Graph'}
                 </button>
               </div>
             </div>
