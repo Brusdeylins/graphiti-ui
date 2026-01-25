@@ -117,9 +117,9 @@ export function VisualizationPage() {
   const [highlightedNodes, setHighlightedNodes] = useState<Set<string>>(new Set());
   const [highlightedEdges, setHighlightedEdges] = useState<Set<number>>(new Set());
   const [limit, setLimit] = useState(() => {
-    if (typeof window === 'undefined') return 500;
+    if (typeof window === 'undefined') return 2000;
     const saved = localStorage.getItem('graphiti-limit');
-    return saved ? Number(saved) : 500;
+    return saved ? Number(saved) : 2000;
   });
   const [refreshKey, setRefreshKey] = useState(0);
   const [groups, setGroups] = useState<string[]>([]);
@@ -978,8 +978,15 @@ export function VisualizationPage() {
                 <option value={10000}>10000 Nodes</option>
               </select>
             </div>
-            <div className="col-auto text-secondary d-flex align-items-center gap-2">
-              {graphData && `${graphData.nodes.length} Nodes • ${graphData.edges.length} Edges`}
+            <div className="col-auto d-flex align-items-center gap-2">
+              {graphData && (
+                <>
+                  <span className={graphData.nodes.length >= limit ? 'text-danger fw-bold' : 'text-secondary'}>
+                    {graphData.nodes.length} Nodes
+                  </span>
+                  <span className="text-secondary">• {graphData.edges.length} Edges</span>
+                </>
+              )}
               {(queueStatus?.currently_processing ?? 0) > 0 && (
                 <IconLoader2 size={16} className="text-warning spin" title="Processing queue active" />
               )}
