@@ -136,7 +136,7 @@ export function VisualizationPage() {
 
   // Graph layout parameters (with localStorage persistence)
   const LAYOUT_DEFAULTS = {
-    linkDistance: 150, chargeStrength: -800, nodeSize: 12, curveSpacing: 50,
+    linkDistance: 150, chargeStrength: -800, centerStrength: 50, nodeSize: 12, curveSpacing: 50,
     nodeLabelZoom: 1.5, edgeLabelZoom: 2.5
   };
   const loadLayoutSetting = (key: string, defaultValue: number) => {
@@ -146,6 +146,7 @@ export function VisualizationPage() {
   };
   const [linkDistance, setLinkDistance] = useState(() => loadLayoutSetting('linkDistance', LAYOUT_DEFAULTS.linkDistance));
   const [chargeStrength, setChargeStrength] = useState(() => loadLayoutSetting('chargeStrength', LAYOUT_DEFAULTS.chargeStrength));
+  const [centerStrength, setCenterStrength] = useState(() => loadLayoutSetting('centerStrength', LAYOUT_DEFAULTS.centerStrength));
   const [nodeSize, setNodeSize] = useState(() => loadLayoutSetting('nodeSize', LAYOUT_DEFAULTS.nodeSize));
   const [curveSpacing, setCurveSpacing] = useState(() => loadLayoutSetting('curveSpacing', LAYOUT_DEFAULTS.curveSpacing));
   const [nodeLabelZoom, setNodeLabelZoom] = useState(() => loadLayoutSetting('nodeLabelZoom', LAYOUT_DEFAULTS.nodeLabelZoom));
@@ -156,11 +157,12 @@ export function VisualizationPage() {
   useEffect(() => {
     localStorage.setItem('graphiti-layout-linkDistance', String(linkDistance));
     localStorage.setItem('graphiti-layout-chargeStrength', String(chargeStrength));
+    localStorage.setItem('graphiti-layout-centerStrength', String(centerStrength));
     localStorage.setItem('graphiti-layout-nodeSize', String(nodeSize));
     localStorage.setItem('graphiti-layout-curveSpacing', String(curveSpacing));
     localStorage.setItem('graphiti-layout-nodeLabelZoom', String(nodeLabelZoom));
     localStorage.setItem('graphiti-layout-edgeLabelZoom', String(edgeLabelZoom));
-  }, [linkDistance, chargeStrength, nodeSize, curveSpacing, nodeLabelZoom, edgeLabelZoom]);
+  }, [linkDistance, chargeStrength, centerStrength, nodeSize, curveSpacing, nodeLabelZoom, edgeLabelZoom]);
 
   // Persist node limit to localStorage
   useEffect(() => {
@@ -1079,6 +1081,7 @@ export function VisualizationPage() {
             highlightedEdges={highlightedEdges}
             linkDistance={linkDistance}
             chargeStrength={chargeStrength}
+            centerStrength={centerStrength}
             nodeSize={nodeSize}
             curveSpacing={curveSpacing}
             nodeLabelZoom={nodeLabelZoom}
@@ -1147,6 +1150,21 @@ export function VisualizationPage() {
                 </div>
                 <div className="mb-3">
                   <label className="form-label small d-flex justify-content-between">
+                    <span>Gravity</span>
+                    <span className="text-muted">{centerStrength / 10}</span>
+                  </label>
+                  <input
+                    type="range"
+                    className="form-range"
+                    min="0"
+                    max="20"
+                    step="1"
+                    value={centerStrength / 10}
+                    onChange={e => setCenterStrength(Number(e.target.value) * 10)}
+                  />
+                </div>
+                <div className="mb-3">
+                  <label className="form-label small d-flex justify-content-between">
                     <span>Node Size</span>
                     <span className="text-muted">{nodeSize}</span>
                   </label>
@@ -1210,6 +1228,7 @@ export function VisualizationPage() {
                   onClick={() => {
                     setLinkDistance(LAYOUT_DEFAULTS.linkDistance);
                     setChargeStrength(LAYOUT_DEFAULTS.chargeStrength);
+                    setCenterStrength(LAYOUT_DEFAULTS.centerStrength);
                     setNodeSize(LAYOUT_DEFAULTS.nodeSize);
                     setCurveSpacing(LAYOUT_DEFAULTS.curveSpacing);
                     setNodeLabelZoom(LAYOUT_DEFAULTS.nodeLabelZoom);

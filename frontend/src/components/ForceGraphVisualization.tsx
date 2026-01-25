@@ -3,6 +3,7 @@ import ForceGraph2D from 'react-force-graph-2d';
 import ForceGraph3D from 'react-force-graph-3d';
 import SpriteText from 'three-spritetext';
 import * as THREE from 'three';
+import { forceX, forceY } from 'd3-force';
 import { useTheme } from '../contexts/ThemeContext';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -65,6 +66,7 @@ interface ForceGraphVisualizationProps {
   // Layout parameters
   linkDistance?: number;
   chargeStrength?: number;
+  centerStrength?: number;
   nodeSize?: number;
   curveSpacing?: number;
   // Label visibility thresholds
@@ -92,6 +94,7 @@ export function ForceGraphVisualization({
   highlightedEdges = new Set(),
   linkDistance = 150,
   chargeStrength = -800,
+  centerStrength = 50,
   nodeSize = 12,
   curveSpacing = 50,
   nodeLabelZoom = 1.5,
@@ -288,6 +291,13 @@ export function ForceGraphVisualization({
         const chargeForce = fg.d3Force?.('charge');
         if (linkForce) linkForce.distance(linkDistance);
         if (chargeForce) chargeForce.strength(chargeStrength);
+
+        // Add centering forces (gravity) to keep nodes from drifting too far
+        // Strength is normalized: centerStrength 0-200 maps to 0-0.2
+        const gravityStrength = centerStrength / 1000;
+        fg.d3Force?.('gravityX', forceX(0).strength(gravityStrength));
+        fg.d3Force?.('gravityY', forceY(0).strength(gravityStrength));
+
         fg.d3ReheatSimulation?.();
       } catch {
         // Simulation not ready yet, ignore
@@ -301,7 +311,7 @@ export function ForceGraphVisualization({
     } else {
       updateForces();
     }
-  }, [linkDistance, chargeStrength, is3D]);
+  }, [linkDistance, chargeStrength, centerStrength, is3D]);
 
   // Handle node click
   const handleNodeClick = useCallback((node: GraphNode) => {
