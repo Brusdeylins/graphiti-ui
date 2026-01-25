@@ -154,14 +154,19 @@ export function ForceGraphVisualization({
     return () => resizeObserver.disconnect();
   }, []);
 
-  // Update forces when parameters change
+  // Update forces when parameters change (2D only - 3D uses different simulation)
   useEffect(() => {
-    const fg = is3D ? graphRef3D.current : graphRef2D.current;
+    if (is3D) return; // 3D uses ngraph, not d3
+    const fg = graphRef2D.current;
     if (!fg) return;
 
-    fg.d3Force('link')?.distance(linkDistance);
-    fg.d3Force('charge')?.strength(chargeStrength);
-    fg.d3ReheatSimulation();
+    try {
+      fg.d3Force('link')?.distance(linkDistance);
+      fg.d3Force('charge')?.strength(chargeStrength);
+      fg.d3ReheatSimulation?.();
+    } catch {
+      // Simulation not ready yet, ignore
+    }
   }, [linkDistance, chargeStrength, is3D]);
 
   // Handle node click
@@ -210,62 +215,48 @@ export function ForceGraphVisualization({
     }
   }, [getNodeColor, nodeSize, highlightedNodes, showLabels, nodeLabelZoom, isDark]);
 
-  // 2D link canvas rendering with labels (supports curved lines)
-  const paintLink2D = useCallback((link: GraphEdge, ctx: CanvasRenderingContext2D, globalScale: number) => {
+  // 2D link label rendering (library draws the lines, we just add labels)
+  const paintLinkLabel2D = useCallback((link: GraphEdge, ctx: CanvasRenderingContext2D, globalScale: number) => {
+    // Only draw labels if zoom is sufficient
+    if (!showLabels || globalScale < edgeLabelZoom || !link.type) return;
+
     const source = link.source as GraphNode;
     const target = link.target as GraphNode;
     if (!source.x || !source.y || !target.x || !target.y) return;
 
-    const idx = typeof link.index === 'number' ? link.index : -1;
-    const isHighlighted = highlightedEdges.has(idx);
     const curvature = (link as any).curvature || 0;
 
-    // Calculate control point for quadratic bezier curve
+    // Calculate label position
     const midX = (source.x + target.x) / 2;
     const midY = (source.y + target.y) / 2;
 
     let labelX = midX;
     let labelY = midY;
 
-    ctx.beginPath();
-    ctx.moveTo(source.x, source.y);
-
     if (curvature !== 0) {
-      // Calculate perpendicular offset for curve control point
+      // Match the library's curve calculation for label positioning
       const dx = target.x - source.x;
       const dy = target.y - source.y;
-      const len = Math.sqrt(dx * dx + dy * dy);
 
-      // Perpendicular vector (normalized) * curvature * distance
-      const offset = curvature * len * 0.5;
-      const cpX = midX - (dy / len) * offset;
-      const cpY = midY + (dx / len) * offset;
+      // Library uses: perpendicular offset = curvature * distance
+      // Control point for quadratic bezier
+      const cpX = midX + curvature * dy;
+      const cpY = midY - curvature * dx;
 
-      ctx.quadraticCurveTo(cpX, cpY, target.x, target.y);
-
-      // Label position at curve midpoint (t=0.5 on quadratic bezier)
+      // Label at curve midpoint (t=0.5 on quadratic bezier)
       labelX = 0.25 * source.x + 0.5 * cpX + 0.25 * target.x;
       labelY = 0.25 * source.y + 0.5 * cpY + 0.25 * target.y;
-    } else {
-      ctx.lineTo(target.x, target.y);
     }
 
-    ctx.strokeStyle = getLinkColor(link);
-    ctx.lineWidth = isHighlighted ? 3 : 1;
-    ctx.stroke();
+    const label = formatEdgeType(link.type);
+    const fontSize = Math.max(8, 10 / globalScale);
 
-    // Draw label if zoom is sufficient
-    if (showLabels && globalScale >= edgeLabelZoom && link.type) {
-      const label = formatEdgeType(link.type);
-      const fontSize = Math.max(8, 10 / globalScale);
-
-      ctx.font = `${fontSize}px Sans-Serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillStyle = isDark ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.7)';
-      ctx.fillText(label, labelX, labelY);
-    }
-  }, [getLinkColor, highlightedEdges, showLabels, edgeLabelZoom, isDark]);
+    ctx.font = `${fontSize}px Sans-Serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = isDark ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.7)';
+    ctx.fillText(label, labelX, labelY);
+  }, [showLabels, edgeLabelZoom, isDark]);
 
   // 3D node object (sprite text for labels)
   const nodeThreeObject = useCallback((node: GraphNode): object | null => {
@@ -463,8 +454,8 @@ export function ForceGraphVisualization({
           {...(props2D as any)}
           nodeCanvasObject={paintNode2D as any}
           nodeCanvasObjectMode={() => 'replace'}
-          linkCanvasObject={paintLink2D as any}
-          linkCanvasObjectMode={() => 'replace'}
+          linkCanvasObject={paintLinkLabel2D as any}
+          linkCanvasObjectMode={() => 'after'}
           onZoom={({ k }: { k: number }) => setCurrentZoom(k)}
         />
       )}
