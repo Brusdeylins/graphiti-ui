@@ -625,7 +625,11 @@ export function VisualizationPage() {
 
     setIsSaving(true);
     try {
-      const response = await api.delete(`/graph/node/${selectedNode.id}`);
+      // Pass group_id as query param (required for FalkorDB)
+      const url = selectedGroup
+        ? `/graph/node/${selectedNode.id}?group_id=${encodeURIComponent(selectedGroup)}`
+        : `/graph/node/${selectedNode.id}`;
+      const response = await api.delete(url);
 
       if (response.data.success) {
         setShowDeleteNodeConfirm(false);
@@ -687,7 +691,11 @@ export function VisualizationPage() {
 
     setIsSaving(true);
     try {
-      const response = await api.delete(`/graph/edge/${selectedEdge.uuid}`);
+      // Pass group_id as query param (required for FalkorDB)
+      const url = selectedGroup
+        ? `/graph/edge/${selectedEdge.uuid}?group_id=${encodeURIComponent(selectedGroup)}`
+        : `/graph/edge/${selectedEdge.uuid}`;
+      const response = await api.delete(url);
 
       if (response.data.success) {
         setShowDeleteEdgeConfirm(false);

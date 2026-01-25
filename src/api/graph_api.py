@@ -453,14 +453,18 @@ async def update_edge(uuid: str, request: UpdateEdgeRequest, current_user: Curre
 
 
 @router.delete("/node/{uuid}")
-async def delete_node(uuid: str, current_user: CurrentUser) -> dict:
+async def delete_node(uuid: str, current_user: CurrentUser, group_id: str | None = None) -> dict:
     """Delete a node via MCP delete_entity_node tool.
 
     This removes the entity and all connected edges from the graph.
+
+    Args:
+        uuid: Node UUID to delete
+        group_id: Graph/group ID (required for FalkorDB)
     """
     try:
         graphiti = get_graphiti_client()
-        result = await graphiti.delete_entity_node(uuid)
+        result = await graphiti.delete_entity_node(uuid, group_id=group_id)
 
         if result.get("success"):
             return {
@@ -475,11 +479,16 @@ async def delete_node(uuid: str, current_user: CurrentUser) -> dict:
 
 
 @router.delete("/edge/{uuid}")
-async def delete_edge(uuid: str, current_user: CurrentUser) -> dict:
-    """Delete an edge via MCP delete_entity_edge tool."""
+async def delete_edge(uuid: str, current_user: CurrentUser, group_id: str | None = None) -> dict:
+    """Delete an edge via MCP delete_entity_edge tool.
+
+    Args:
+        uuid: Edge UUID to delete
+        group_id: Graph/group ID (required for FalkorDB)
+    """
     try:
         graphiti = get_graphiti_client()
-        result = await graphiti.delete_entity_edge(uuid)
+        result = await graphiti.delete_entity_edge(uuid, group_id=group_id)
 
         if result.get("success"):
             return {

@@ -191,30 +191,40 @@ class GraphitiClient:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    async def delete_entity_node(self, uuid: str) -> dict:
+    async def delete_entity_node(self, uuid: str, group_id: str | None = None) -> dict:
         """Delete an entity node from the knowledge graph.
 
         Args:
             uuid: UUID of the entity to delete
+            group_id: Graph/group ID (required for FalkorDB)
         """
         try:
+            url = f"{self.base_url}/entity/{uuid}"
+            if group_id:
+                url += f"?group_id={group_id}"
+
             async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.delete(f"{self.base_url}/entity/{uuid}")
+                response = await client.delete(url)
                 if response.status_code == 200:
                     return response.json()
                 return {"success": False, "error": f"HTTP {response.status_code}"}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    async def delete_entity_edge(self, uuid: str) -> dict:
+    async def delete_entity_edge(self, uuid: str, group_id: str | None = None) -> dict:
         """Delete an entity edge (relationship) from the knowledge graph.
 
         Args:
             uuid: UUID of the edge to delete
+            group_id: Graph/group ID (required for FalkorDB)
         """
         try:
+            url = f"{self.base_url}/edge/{uuid}"
+            if group_id:
+                url += f"?group_id={group_id}"
+
             async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.delete(f"{self.base_url}/edge/{uuid}")
+                response = await client.delete(url)
                 if response.status_code == 200:
                     return response.json()
                 return {"success": False, "error": f"HTTP {response.status_code}"}
