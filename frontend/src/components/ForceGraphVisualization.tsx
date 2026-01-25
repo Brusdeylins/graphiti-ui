@@ -213,7 +213,7 @@ export function ForceGraphVisualization({
     }
   }, [getNodeColor, nodeSize, highlightedNodes, showLabels, nodeLabelZoom, isDark]);
 
-  // 2D link canvas rendering with labels
+  // 2D link canvas rendering with labels (supports curved lines)
   const paintLink2D = useCallback((link: GraphEdge, ctx: CanvasRenderingContext2D, globalScale: number) => {
     const source = link.source as GraphNode;
     const target = link.target as GraphNode;
@@ -221,19 +221,44 @@ export function ForceGraphVisualization({
 
     const idx = typeof link.index === 'number' ? link.index : -1;
     const isHighlighted = highlightedEdges.has(idx);
+    const curvature = (link as any).curvature || 0;
 
-    // Draw link line
+    // Calculate control point for quadratic bezier curve
+    const midX = (source.x + target.x) / 2;
+    const midY = (source.y + target.y) / 2;
+
+    let labelX = midX;
+    let labelY = midY;
+
     ctx.beginPath();
     ctx.moveTo(source.x, source.y);
-    ctx.lineTo(target.x, target.y);
+
+    if (curvature !== 0) {
+      // Calculate perpendicular offset for curve control point
+      const dx = target.x - source.x;
+      const dy = target.y - source.y;
+      const len = Math.sqrt(dx * dx + dy * dy);
+
+      // Perpendicular vector (normalized) * curvature * distance
+      const offset = curvature * len * 0.5;
+      const cpX = midX - (dy / len) * offset;
+      const cpY = midY + (dx / len) * offset;
+
+      ctx.quadraticCurveTo(cpX, cpY, target.x, target.y);
+
+      // Label position at curve midpoint (t=0.5 on quadratic bezier)
+      labelX = 0.25 * source.x + 0.5 * cpX + 0.25 * target.x;
+      labelY = 0.25 * source.y + 0.5 * cpY + 0.25 * target.y;
+    } else {
+      ctx.lineTo(target.x, target.y);
+    }
+
     ctx.strokeStyle = getLinkColor(link);
     ctx.lineWidth = isHighlighted ? 3 : 1;
     ctx.stroke();
 
     // Draw label if zoom is sufficient
     if (showLabels && globalScale >= edgeLabelZoom && link.type) {
-      const midX = (source.x + target.x) / 2;
-      const midY = (source.y + target.y) / 2;
       const label = formatEdgeType(link.type);
       const fontSize = Math.max(8, 10 / globalScale);
 
@@ -241,7 +266,7 @@ export function ForceGraphVisualization({
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillStyle = isDark ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.7)';
-      ctx.fillText(label, midX, midY);
+      ctx.fillText(label, labelX, labelY);
     }
   }, [getLinkColor, highlightedEdges, showLabels, edgeLabelZoom, isDark]);
 
