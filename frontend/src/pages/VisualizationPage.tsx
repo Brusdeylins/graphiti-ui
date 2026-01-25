@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import * as d3 from 'd3';
 import { api } from '../api/client';
 import { useTheme } from '../contexts/ThemeContext';
+import { ForceGraphVisualization, type GraphNode, type GraphEdge } from '../components/ForceGraphVisualization';
 import { IconRefresh, IconTrash, IconPlus, IconEdit, IconX, IconCheck, IconTrashX, IconAdjustments, IconAlertTriangle, IconBrain, IconLink, IconLoader2 } from '@tabler/icons-react';
 
 // CSS for spinning animation
@@ -95,7 +95,6 @@ const colorPalette = [
 ];
 
 const defaultColor = '#667382';
-const highlightColor = '#206bc4';
 
 // Format edge type from UPPER_SNAKE_CASE to Title Case
 function formatEdgeType(type: string): string {
@@ -108,9 +107,8 @@ function formatEdgeType(type: string): string {
 }
 
 export function VisualizationPage() {
-  const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const { theme } = useTheme();
+  useTheme(); // Hook needed for theme context
   const [graphData, setGraphData] = useState<GraphData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -129,7 +127,6 @@ export function VisualizationPage() {
   const [expandedEpisode, setExpandedEpisode] = useState<string | null>(null);
   const isResizingRef = useRef(false);
   const processedEdgesRef = useRef<Edge[]>([]);
-  const simulationRef = useRef<d3.Simulation<d3.SimulationNodeDatum, undefined> | null>(null);
   const [queueStatus, setQueueStatus] = useState<QueueStatus | null>(null);
   const prevProcessingRef = useRef<number>(0);
 
@@ -221,20 +218,6 @@ export function VisualizationPage() {
   // Create graph modal state
   const [showCreateGraphModal, setShowCreateGraphModal] = useState(false);
   const [newGraphId, setNewGraphId] = useState('');
-
-  // Refs for D3 selections to update highlighting without re-running simulation
-  const nodeSelectionRef = useRef<d3.Selection<SVGGElement, Node, SVGGElement, unknown> | null>(null);
-  const linkSelectionRef = useRef<d3.Selection<SVGPathElement, Edge, SVGGElement, unknown> | null>(null);
-  const edgeLabelSelectionRef = useRef<d3.Selection<SVGGElement, Edge, SVGGElement, unknown> | null>(null);
-  const themeColorsRef = useRef<{ isDark: boolean; linkColor: string; linkHighlightColor: string }>({
-    isDark: false,
-    linkColor: '#cbd5e0',
-    linkHighlightColor: highlightColor,
-  });
-  const autoFitDoneRef = useRef(false);
-  const zoomTransformRef = useRef<d3.ZoomTransform>(d3.zoomIdentity);
-  const dragLineGroupRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
-  const edgeDragSourceRef = useRef<Node | null>(null);
 
   // Extract unique types from visible nodes and build color map (memoized)
   const nodeTypes = useMemo(() =>
@@ -858,553 +841,6 @@ export function VisualizationPage() {
     fetchData();
   }, [limit, selectedGroup, refreshKey]);
 
-  useEffect(() => {
-    if (!graphData || !svgRef.current || !containerRef.current) return;
-
-    // Reset auto-fit flag for new data
-    autoFitDoneRef.current = false;
-
-    const container = containerRef.current;
-    const width = container.clientWidth;
-    const height = container.clientHeight;
-
-    // Clear previous content
-    d3.select(svgRef.current).selectAll('*').remove();
-
-    const svg = d3.select(svgRef.current)
-      .attr('width', width)
-      .attr('height', height)
-      .attr('viewBox', [0, 0, width, height]);
-
-    // Create main group for zoom/pan
-    const g = svg.append('g');
-
-    // Setup zoom behavior
-    const zoom = d3.zoom<SVGSVGElement, unknown>()
-      .scaleExtent([0.1, 4])
-      .on('zoom', (event) => {
-        g.attr('transform', event.transform);
-        zoomTransformRef.current = event.transform;
-      });
-
-    svg.call(zoom);
-
-    // Create drag line group (above edges, below nodes)
-    const dragLineGroup = g.append('g').attr('class', 'drag-line');
-    dragLineGroupRef.current = dragLineGroup;
-
-    // Click on background to clear selection
-    svg.on('click', (event) => {
-      if (event.target === svgRef.current) {
-        clearSelection();
-      }
-    });
-
-    const isDark = theme === 'dark';
-    const linkColor = isDark ? '#4a5568' : '#cbd5e0';
-    const linkHighlightColor = highlightColor;
-    const textColor = isDark ? '#f8fafc' : '#182433';
-    const bgColor = isDark ? '#182433' : '#f8fafc';
-    const labelBgColor = isDark ? 'rgba(24, 36, 51, 0.9)' : 'rgba(255, 255, 255, 0.9)';
-
-    svg.style('background', bgColor);
-
-    // Process edges - count links between same node pairs for curve offset
-    const linkCounts: Record<string, number> = {};
-    const processedEdges = graphData.edges.map((edge, i) => {
-      const sourceId = typeof edge.source === 'string' ? edge.source : edge.source.id;
-      const targetId = typeof edge.target === 'string' ? edge.target : edge.target.id;
-      const key = [sourceId, targetId].sort().join('-');
-
-      if (!linkCounts[key]) linkCounts[key] = 0;
-      const linkIndex = linkCounts[key]++;
-
-      return { ...edge, linkIndex, originalIndex: i };
-    });
-
-    // Add final link counts
-    processedEdges.forEach(edge => {
-      const sourceId = typeof edge.source === 'string' ? edge.source : edge.source.id;
-      const targetId = typeof edge.target === 'string' ? edge.target : edge.target.id;
-      const key = [sourceId, targetId].sort().join('-');
-      edge.linkCount = linkCounts[key];
-    });
-
-    // Store for sidebar navigation
-    processedEdgesRef.current = processedEdges;
-
-    // Create simulation with improved physics
-    const simulation = d3.forceSimulation(graphData.nodes as d3.SimulationNodeDatum[])
-      .force('link', d3.forceLink(processedEdges)
-        .id((d: any) => d.id)
-        .distance(linkDistance)
-        .strength(0.3))
-      .force('charge', d3.forceManyBody()
-        .strength(chargeStrength)
-        .distanceMin(20)
-        .distanceMax(400))
-      .force('center', d3.forceCenter(width / 2, height / 2).strength(0.1))
-      .force('collision', d3.forceCollide().radius(nodeSize + 5).strength(0.7))
-      .velocityDecay(0.4)
-      .alphaDecay(0.02);
-
-    // Store simulation ref for dynamic updates
-    simulationRef.current = simulation;
-
-    // Arrow marker for directed edges
-    svg.append('defs').append('marker')
-      .attr('id', 'arrowhead')
-      .attr('viewBox', '-0 -5 10 10')
-      .attr('refX', 10)
-      .attr('refY', 0)
-      .attr('orient', 'auto')
-      .attr('markerWidth', 6)
-      .attr('markerHeight', 6)
-      .append('path')
-      .attr('d', 'M 0,-5 L 10,0 L 0,5')
-      .attr('fill', linkColor);
-
-    // Highlighted arrow marker
-    svg.select('defs').append('marker')
-      .attr('id', 'arrowhead-highlight')
-      .attr('viewBox', '-0 -5 10 10')
-      .attr('refX', 10)
-      .attr('refY', 0)
-      .attr('orient', 'auto')
-      .attr('markerWidth', 6)
-      .attr('markerHeight', 6)
-      .append('path')
-      .attr('d', 'M 0,-5 L 10,0 L 0,5')
-      .attr('fill', linkHighlightColor);
-
-    // Store theme colors in ref for highlighting effect
-    themeColorsRef.current = { isDark, linkColor, linkHighlightColor };
-
-    // Create edge paths (curved)
-    const linkGroup = g.append('g').attr('class', 'links');
-
-    const link = linkGroup.selectAll('path')
-      .data(processedEdges)
-      .join('path')
-      .attr('fill', 'none')
-      .attr('stroke', linkColor)
-      .attr('stroke-width', 1.5)
-      .attr('stroke-opacity', 0.6)
-      .attr('marker-end', 'url(#arrowhead)')
-      .style('cursor', 'pointer')
-      .on('click', (event, d: any) => {
-        event.stopPropagation();
-        handleEdgeClick(d, d.originalIndex);
-      });
-
-    // Store link selection in ref
-    linkSelectionRef.current = link as any;
-
-    // Create edge labels
-    const edgeLabelGroup = g.append('g').attr('class', 'edge-labels');
-
-    const edgeLabels = edgeLabelGroup.selectAll('g')
-      .data(processedEdges)
-      .join('g')
-      .style('cursor', 'pointer')
-      .on('click', (event, d: any) => {
-        event.stopPropagation();
-        handleEdgeClick(d, d.originalIndex);
-      });
-
-    // Store edge label selection in ref
-    edgeLabelSelectionRef.current = edgeLabels as any;
-
-    // Label background
-    edgeLabels.append('rect')
-      .attr('fill', labelBgColor)
-      .attr('rx', 3)
-      .attr('ry', 3);
-
-    // Label text
-    edgeLabels.append('text')
-      .text((d: any) => d.type || '')
-      .attr('font-size', '9px')
-      .attr('font-family', 'Inter, system-ui, sans-serif')
-      .attr('fill', textColor)
-      .attr('text-anchor', 'middle')
-      .attr('dominant-baseline', 'middle');
-
-    // Create node groups
-    const nodeGroup = g.append('g').attr('class', 'nodes');
-
-    // Helper to find node at position
-    const findNodeAtPosition = (x: number, y: number, exclude?: Node): Node | null => {
-      const radius = 20; // Detection radius
-      for (const n of graphData.nodes) {
-        if (n === exclude) continue;
-        const dx = (n.x || 0) - x;
-        const dy = (n.y || 0) - y;
-        if (Math.sqrt(dx * dx + dy * dy) < radius) {
-          return n;
-        }
-      }
-      return null;
-    };
-
-    const node = nodeGroup.selectAll<SVGGElement, Node>('g')
-      .data(graphData.nodes)
-      .join('g')
-      .style('cursor', 'pointer')
-      .call(d3.drag<SVGGElement, Node>()
-        .on('start', (event, d: any) => {
-          // Check for Shift key to enter edge creation mode
-          if (event.sourceEvent.shiftKey && selectedGroup) {
-            edgeDragSourceRef.current = d;
-            // Draw initial drag line
-            dragLineGroup.selectAll('*').remove();
-            dragLineGroup.append('line')
-              .attr('class', 'edge-drag-line')
-              .attr('x1', d.x)
-              .attr('y1', d.y)
-              .attr('x2', d.x)
-              .attr('y2', d.y)
-              .attr('stroke', highlightColor)
-              .attr('stroke-width', 2)
-              .attr('stroke-dasharray', '5,5')
-              .attr('marker-end', 'url(#arrowhead-highlight)');
-          } else {
-            // Normal drag - move node
-            if (!event.active) simulation.alphaTarget(0.3).restart();
-            d.fx = d.x;
-            d.fy = d.y;
-          }
-        })
-        .on('drag', (event, d: any) => {
-          if (edgeDragSourceRef.current) {
-            // Edge creation mode - update drag line
-            dragLineGroup.select('line')
-              .attr('x2', event.x)
-              .attr('y2', event.y);
-            // Highlight potential target node
-            const target = findNodeAtPosition(event.x, event.y, edgeDragSourceRef.current);
-            node.select('circle')
-              .attr('stroke', (n: Node) => n === target ? highlightColor : (isDark ? '#182433' : '#ffffff'))
-              .attr('stroke-width', (n: Node) => n === target ? 3 : 2);
-          } else {
-            // Normal drag - move node
-            d.fx = event.x;
-            d.fy = event.y;
-          }
-        })
-        .on('end', (event, d: any) => {
-          if (edgeDragSourceRef.current) {
-            // Edge creation mode - check for target
-            const target = findNodeAtPosition(event.x, event.y, edgeDragSourceRef.current);
-            if (target) {
-              // Open edge creation modal with source and target
-              setEdgeSourceNode(edgeDragSourceRef.current);
-              setEdgeTargetNode(target);
-              setShowCreateEdgeModal(true);
-            }
-            // Clean up
-            dragLineGroup.selectAll('*').remove();
-            edgeDragSourceRef.current = null;
-            // Reset node highlighting
-            node.select('circle')
-              .attr('stroke', isDark ? '#182433' : '#ffffff')
-              .attr('stroke-width', 2);
-          } else {
-            // Normal drag - release node
-            if (!event.active) simulation.alphaTarget(0);
-            d.fx = null;
-            d.fy = null;
-          }
-        }) as any);
-
-    // Store node selection in ref
-    nodeSelectionRef.current = node;
-
-    // Node circles with drop shadow
-    node.append('circle')
-      .attr('r', nodeSize)
-      .attr('fill', (d: Node) => getTypeColor(d.type))
-      .attr('stroke', isDark ? '#3a4a5c' : '#ffffff')
-      .attr('stroke-width', 2)
-      .attr('filter', isDark ? 'drop-shadow(0 2px 3px rgba(0,0,0,0.4))' : 'drop-shadow(0 2px 3px rgba(0,0,0,0.2))')
-      .on('click', (event, d: Node) => {
-        event.stopPropagation();
-        handleNodeClick(d, processedEdges);
-      });
-
-    // Node labels
-    node.append('text')
-      .text((d: Node) => d.name?.substring(0, 20) || d.id.substring(0, 8))
-      .attr('x', nodeSize + 4)
-      .attr('y', 4)
-      .attr('fill', textColor)
-      .attr('font-size', '11px')
-      .attr('font-family', 'Inter, system-ui, sans-serif')
-      .attr('pointer-events', 'none');
-
-    // Helper function to generate curved path with node radius offset
-    function linkPath(d: any): string {
-      const source = d.source;
-      const target = d.target;
-
-      if (!source.x || !target.x) return '';
-
-      // Offset for node radius + arrow size
-      const sourceRadius = nodeSize;
-      const targetRadius = nodeSize + 6; // Extra space for arrowhead
-
-      // Self-loop
-      if (source.id === target.id) {
-        const x = source.x;
-        const y = source.y;
-        const r = 30 + nodeSize; // Scale loop with node size
-        return `M ${x - nodeSize} ${y - nodeSize}
-                A ${r} ${r} 0 1 1 ${x + nodeSize} ${y - nodeSize}
-                A ${r} ${r} 0 0 1 ${x - nodeSize} ${y - nodeSize}`;
-      }
-
-      // Multiple edges between same nodes - curve them
-      const linkCount = d.linkCount ?? 1;
-      const linkIndex = d.linkIndex ?? 0;
-
-      // Direct distance for straight line offset calculation
-      const directDx = target.x - source.x;
-      const directDy = target.y - source.y;
-      const directDist = Math.sqrt(directDx * directDx + directDy * directDy);
-
-      if (directDist === 0) return '';
-
-      if (linkCount === 1) {
-        // Single edge - straight line with node radius offset
-        const ux = directDx / directDist;
-        const uy = directDy / directDist;
-        const startX = source.x + ux * sourceRadius;
-        const startY = source.y + uy * sourceRadius;
-        const endX = target.x - ux * targetRadius;
-        const endY = target.y - uy * targetRadius;
-        return `M ${startX} ${startY} L ${endX} ${endY}`;
-      }
-
-      // Use consistent direction based on sorted node IDs (not edge direction)
-      // This ensures A→B and B→A curves don't overlap
-      const sourceId = source.id;
-      const targetId = target.id;
-      const isReversed = sourceId > targetId;
-
-      // Always compute dx/dy from lower ID to higher ID for consistent perpendicular
-      const dx = isReversed ? (source.x - target.x) : (target.x - source.x);
-      const dy = isReversed ? (source.y - target.y) : (target.y - source.y);
-      const dr = Math.sqrt(dx * dx + dy * dy);
-
-      if (dr === 0) return '';
-
-      // Multiple edges - create curved paths with symmetric offsets
-      const offset = ((linkIndex + 0.5) - linkCount / 2) * curveSpacing;
-      const midX = (source.x + target.x) / 2;
-      const midY = (source.y + target.y) / 2;
-
-      // Perpendicular offset (consistent direction regardless of edge direction)
-      const nx = -dy / dr;
-      const ny = dx / dr;
-
-      const ctrlX = midX + nx * offset;
-      const ctrlY = midY + ny * offset;
-
-      // Offset start point along direction to control point
-      const toCtrlDx = ctrlX - source.x;
-      const toCtrlDy = ctrlY - source.y;
-      const toCtrlDist = Math.sqrt(toCtrlDx * toCtrlDx + toCtrlDy * toCtrlDy);
-      const startX = source.x + (toCtrlDx / toCtrlDist) * sourceRadius;
-      const startY = source.y + (toCtrlDy / toCtrlDist) * sourceRadius;
-
-      // Offset end point along direction from control point
-      const fromCtrlDx = target.x - ctrlX;
-      const fromCtrlDy = target.y - ctrlY;
-      const fromCtrlDist = Math.sqrt(fromCtrlDx * fromCtrlDx + fromCtrlDy * fromCtrlDy);
-      const endX = target.x - (fromCtrlDx / fromCtrlDist) * targetRadius;
-      const endY = target.y - (fromCtrlDy / fromCtrlDist) * targetRadius;
-
-      return `M ${startX} ${startY} Q ${ctrlX} ${ctrlY} ${endX} ${endY}`;
-    }
-
-    // Helper to get edge label position
-    function getLabelPosition(d: any): { x: number; y: number } {
-      const source = d.source;
-      const target = d.target;
-
-      if (!source.x || !target.x) return { x: 0, y: 0 };
-
-      // Self-loop
-      if (source.id === target.id) {
-        return { x: source.x, y: source.y - 50 };
-      }
-
-      const linkCount = d.linkCount ?? 1;
-      const linkIndex = d.linkIndex ?? 0;
-
-      const midX = (source.x + target.x) / 2;
-      const midY = (source.y + target.y) / 2;
-
-      if (linkCount === 1) {
-        return { x: midX, y: midY };
-      }
-
-      // Use consistent direction based on sorted node IDs (same as linkPath)
-      const sourceId = source.id;
-      const targetId = target.id;
-      const isReversed = sourceId > targetId;
-
-      const dx = isReversed ? (source.x - target.x) : (target.x - source.x);
-      const dy = isReversed ? (source.y - target.y) : (target.y - source.y);
-      const dr = Math.sqrt(dx * dx + dy * dy);
-
-      if (dr === 0) return { x: midX, y: midY };
-
-      // Same formula as linkPath for consistency
-      const offset = ((linkIndex + 0.5) - linkCount / 2) * curveSpacing;
-      const nx = -dy / dr;
-      const ny = dx / dr;
-
-      return {
-        x: midX + nx * offset * 0.5,
-        y: midY + ny * offset * 0.5
-      };
-    }
-
-    // Simulation tick
-    simulation.on('tick', () => {
-      // Update link paths
-      link.attr('d', linkPath);
-
-      // Update edge labels
-      edgeLabels.each(function(d: any) {
-        const pos = getLabelPosition(d);
-        const text = d3.select(this).select('text');
-        const rect = d3.select(this).select('rect');
-
-        text.attr('x', pos.x).attr('y', pos.y);
-
-        // Size the background rect to fit text
-        const bbox = (text.node() as SVGTextElement)?.getBBox();
-        if (bbox) {
-          rect
-            .attr('x', bbox.x - 3)
-            .attr('y', bbox.y - 1)
-            .attr('width', bbox.width + 6)
-            .attr('height', bbox.height + 2);
-        }
-      });
-
-      // Update node positions
-      node.attr('transform', (d: any) => `translate(${d.x},${d.y})`);
-    });
-
-    // Auto-fit when simulation ends (only once per graph selection)
-    simulation.on('end', () => {
-      if (autoFitDoneRef.current) return;
-      autoFitDoneRef.current = true;
-
-      // Calculate bounding box of all nodes
-      let minX = Infinity, maxX = -Infinity;
-      let minY = Infinity, maxY = -Infinity;
-
-      graphData.nodes.forEach((d: any) => {
-        if (d.x < minX) minX = d.x;
-        if (d.x > maxX) maxX = d.x;
-        if (d.y < minY) minY = d.y;
-        if (d.y > maxY) maxY = d.y;
-      });
-
-      if (minX !== Infinity) {
-        const padding = 50;
-        const boxWidth = maxX - minX + padding * 2;
-        const boxHeight = maxY - minY + padding * 2;
-
-        const scale = Math.min(
-          width / boxWidth,
-          height / boxHeight,
-          1.5 // Max zoom
-        ) * 0.9; // Leave some margin
-
-        const centerX = (minX + maxX) / 2;
-        const centerY = (minY + maxY) / 2;
-
-        const transform = d3.zoomIdentity
-          .translate(width / 2, height / 2)
-          .scale(scale)
-          .translate(-centerX, -centerY);
-
-        // Instant fit (no animation) to avoid double-zoom effect
-        svg.call(zoom.transform, transform);
-      }
-    });
-
-    return () => {
-      simulation.stop();
-    };
-  }, [graphData, theme, typeColors, handleNodeClick, handleEdgeClick, clearSelection, selectedGroup, linkDistance, chargeStrength, nodeSize, curveSpacing]);
-
-  // Update simulation forces when layout parameters change (without full re-render)
-  useEffect(() => {
-    if (!simulationRef.current) return;
-
-    const simulation = simulationRef.current;
-
-    // Update forces
-    const linkForce = simulation.force('link') as d3.ForceLink<d3.SimulationNodeDatum, d3.SimulationLinkDatum<d3.SimulationNodeDatum>>;
-    if (linkForce) {
-      linkForce.distance(linkDistance);
-    }
-
-    const chargeForce = simulation.force('charge') as d3.ForceManyBody<d3.SimulationNodeDatum>;
-    if (chargeForce) {
-      chargeForce.strength(chargeStrength);
-    }
-
-    const collisionForce = simulation.force('collision') as d3.ForceCollide<d3.SimulationNodeDatum>;
-    if (collisionForce) {
-      collisionForce.radius(nodeSize + 5);
-    }
-
-    // Update visual node size
-    const node = nodeSelectionRef.current;
-    if (node) {
-      node.selectAll('circle').attr('r', nodeSize);
-      node.selectAll('text').attr('x', nodeSize + 4);
-    }
-
-    // Reheat simulation to apply changes
-    simulation.alpha(0.3).restart();
-  }, [linkDistance, chargeStrength, nodeSize]);
-
-  // Separate effect for highlighting updates (doesn't restart simulation)
-  useEffect(() => {
-    const node = nodeSelectionRef.current;
-    const link = linkSelectionRef.current;
-    const edgeLabels = edgeLabelSelectionRef.current;
-    const { isDark, linkColor, linkHighlightColor } = themeColorsRef.current;
-
-    if (!node || !link || !edgeLabels) return;
-
-    // Update node appearance
-    node.select('circle')
-      .attr('stroke', (d: Node) => highlightedNodes.has(d.id) ? highlightColor : (isDark ? '#182433' : '#ffffff'))
-      .attr('stroke-width', (d: Node) => highlightedNodes.has(d.id) ? 3 : 2)
-      .attr('opacity', highlightedNodes.size === 0 ? 1 : (d: Node) => highlightedNodes.has(d.id) ? 1 : 0.3);
-
-    node.select('text')
-      .attr('opacity', highlightedNodes.size === 0 ? 1 : (d: Node) => highlightedNodes.has(d.id) ? 1 : 0.3);
-
-    // Update edge appearance
-    link
-      .attr('stroke', (d: any) => highlightedEdges.has(d.originalIndex) ? linkHighlightColor : linkColor)
-      .attr('stroke-width', (d: any) => highlightedEdges.has(d.originalIndex) ? 2.5 : 1.5)
-      .attr('stroke-opacity', highlightedEdges.size === 0 ? 0.6 : (d: any) => highlightedEdges.has(d.originalIndex) ? 1 : 0.15)
-      .attr('marker-end', (d: any) => highlightedEdges.has(d.originalIndex) ? 'url(#arrowhead-highlight)' : 'url(#arrowhead)');
-
-    edgeLabels
-      .attr('opacity', highlightedEdges.size === 0 ? 1 : (d: any) => highlightedEdges.has(d.originalIndex) ? 1 : 0.2);
-  }, [highlightedNodes, highlightedEdges]);
 
   return (
     <div className="d-flex flex-column" style={{ height: 'calc(100vh - 2rem)' }}>
@@ -1547,7 +983,25 @@ export function VisualizationPage() {
           </div>
         )}
 
-        <svg ref={svgRef} className="w-100 h-100" />
+        {/* Force Graph Visualization */}
+        {graphData && (
+          <ForceGraphVisualization
+            graphData={{
+              nodes: graphData.nodes as GraphNode[],
+              links: graphData.edges.map((e, i) => ({ ...e, index: i })) as GraphEdge[],
+            }}
+            onNodeClick={(node) => handleNodeClick(node as Node, graphData.edges)}
+            onEdgeClick={(edge) => handleEdgeClick(edge as Edge, edge.index || 0)}
+            onBackgroundClick={clearSelection}
+            highlightedNodes={highlightedNodes}
+            highlightedEdges={highlightedEdges}
+            selectedNode={selectedNode as GraphNode | null}
+            selectedEdge={selectedEdge as GraphEdge | null}
+            linkDistance={linkDistance}
+            chargeStrength={chargeStrength}
+            nodeSize={nodeSize}
+          />
+        )}
 
         {/* Legend */}
         {nodeTypes.length > 0 && (
