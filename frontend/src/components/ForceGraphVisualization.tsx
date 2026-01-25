@@ -3,7 +3,7 @@ import ForceGraph2D from 'react-force-graph-2d';
 import ForceGraph3D from 'react-force-graph-3d';
 import SpriteText from 'three-spritetext';
 import * as THREE from 'three';
-import { forceX, forceY } from 'd3-force';
+import { forceX, forceY, forceZ } from 'd3-force-3d';
 import { useTheme } from '../contexts/ThemeContext';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -297,6 +297,10 @@ export function ForceGraphVisualization({
         const gravityStrength = centerStrength / 1000;
         fg.d3Force?.('gravityX', forceX(0).strength(gravityStrength));
         fg.d3Force?.('gravityY', forceY(0).strength(gravityStrength));
+        // Add Z-axis gravity for 3D mode
+        if (is3D) {
+          fg.d3Force?.('gravityZ', forceZ(0).strength(gravityStrength));
+        }
 
         fg.d3ReheatSimulation?.();
       } catch {
