@@ -35,7 +35,7 @@ class GroupIdsResponse(BaseModel):
 @router.get("/data", response_model=GraphDataResponse)
 async def get_graph_data(
     current_user: CurrentUser,
-    limit: int = Query(default=500, ge=1, le=2000, description="Max nodes to return"),
+    limit: int = Query(default=500, ge=1, le=10000, description="Max nodes to return"),
     group_id: str | None = Query(default=None, description="Filter by group ID"),
 ) -> GraphDataResponse:
     """Get graph data for visualization.
