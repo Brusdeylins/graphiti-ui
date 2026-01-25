@@ -2,7 +2,24 @@ import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import * as d3 from 'd3';
 import { api } from '../api/client';
 import { useTheme } from '../contexts/ThemeContext';
-import { IconRefresh, IconTrash, IconPlus, IconEdit, IconX, IconCheck, IconTrashX, IconAdjustments, IconAlertTriangle, IconBrain, IconLink } from '@tabler/icons-react';
+import { IconRefresh, IconTrash, IconPlus, IconEdit, IconX, IconCheck, IconTrashX, IconAdjustments, IconAlertTriangle, IconBrain, IconLink, IconLoader2 } from '@tabler/icons-react';
+
+// CSS for spinning animation
+const spinKeyframes = `
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.spin { animation: spin 1s linear infinite; }
+`;
+
+// Inject styles once
+if (typeof document !== 'undefined' && !document.getElementById('visualization-spin-styles')) {
+  const style = document.createElement('style');
+  style.id = 'visualization-spin-styles';
+  style.textContent = spinKeyframes;
+  document.head.appendChild(style);
+}
 
 interface Node {
   id: string;
@@ -65,6 +82,11 @@ interface EntityType {
   fields: EntityTypeField[];
 }
 
+interface QueueStatus {
+  total_pending: number;
+  currently_processing: number;
+}
+
 // Color palette for entity types
 const colorPalette = [
   '#206bc4', '#2fb344', '#f76707', '#d63939', '#ae3ec9',
@@ -108,6 +130,8 @@ export function VisualizationPage() {
   const isResizingRef = useRef(false);
   const processedEdgesRef = useRef<Edge[]>([]);
   const simulationRef = useRef<d3.Simulation<d3.SimulationNodeDatum, undefined> | null>(null);
+  const [queueStatus, setQueueStatus] = useState<QueueStatus | null>(null);
+  const prevProcessingRef = useRef<number>(0);
 
   // Graph layout parameters (with localStorage persistence)
   const LAYOUT_DEFAULTS = { linkDistance: 150, chargeStrength: -800, nodeSize: 12, curveSpacing: 50 };
@@ -129,6 +153,34 @@ export function VisualizationPage() {
     localStorage.setItem('graphiti-layout-nodeSize', String(nodeSize));
     localStorage.setItem('graphiti-layout-curveSpacing', String(curveSpacing));
   }, [linkDistance, chargeStrength, nodeSize, curveSpacing]);
+
+  // Auto-refresh queue status every 2 seconds
+  useEffect(() => {
+    const fetchQueueStatus = async () => {
+      try {
+        const res = await api.get('/dashboard/status').catch(() => null);
+        if (res?.data?.queue) {
+          const newStatus = res.data.queue as QueueStatus;
+          const wasProcessing = prevProcessingRef.current > 0;
+          const isNowIdle = newStatus.currently_processing === 0;
+
+          // Auto-refresh graph when queue finishes processing
+          if (wasProcessing && isNowIdle) {
+            setRefreshKey(k => k + 1);
+          }
+
+          prevProcessingRef.current = newStatus.currently_processing;
+          setQueueStatus(newStatus);
+        }
+      } catch {
+        // Silently ignore polling errors
+      }
+    };
+
+    fetchQueueStatus(); // Initial fetch
+    const interval = setInterval(fetchQueueStatus, 2000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Graph Editor state
   const [showCreateNodeModal, setShowCreateNodeModal] = useState(false);
@@ -575,10 +627,11 @@ export function VisualizationPage() {
         setAlertMessage({
           type: 'info',
           title: 'Knowledge Submitted',
-          message: 'The LLM is processing your input. New nodes/edges will appear after processing completes.',
+          message: 'The LLM is processing your input. Graph will refresh automatically when done.',
         });
-        // Refresh graph after delay for LLM processing
-        setTimeout(refreshGraph, 3000);
+        // Start spinner immediately, auto-refresh happens when queue finishes
+        setQueueStatus({ total_pending: 1, currently_processing: 1 });
+        prevProcessingRef.current = 1;
       } else {
         setAlertMessage({ type: 'error', title: 'Submit Failed', message: response.data.error });
       }
@@ -1402,8 +1455,11 @@ export function VisualizationPage() {
                 <option value={10000}>10000 Nodes</option>
               </select>
             </div>
-            <div className="col-auto text-secondary">
+            <div className="col-auto text-secondary d-flex align-items-center gap-2">
               {graphData && `${graphData.nodes.length} Nodes • ${graphData.edges.length} Edges`}
+              {(queueStatus?.currently_processing ?? 0) > 0 && (
+                <IconLoader2 size={16} className="text-warning spin" title="Processing queue active" />
+              )}
             </div>
 
             {/* Spacer */}

@@ -40,7 +40,7 @@ class Settings(BaseSettings):
 
     # JWT Settings
     jwt_algorithm: str = "HS256"
-    jwt_expire_minutes: int = 480  # 8 Stunden
+    jwt_expire_minutes: int = 43200  # 30 Tage
 
     # CORS (if needed)
     cors_origins: list[str] = ["*"]
