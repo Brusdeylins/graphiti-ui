@@ -1070,8 +1070,8 @@ export function VisualizationPage() {
                   <input
                     type="range"
                     className="form-range"
-                    min="6"
-                    max="24"
+                    min="4"
+                    max="50"
                     step="2"
                     value={nodeSize}
                     onChange={e => setNodeSize(Number(e.target.value))}

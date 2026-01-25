@@ -278,12 +278,46 @@ export function ForceGraphVisualization({
     Object.assign(sprite.position, middle);
   }, []);
 
-  // Process graph data to add edge indices
+  // Process graph data to add edge indices and curvature for multiple edges
   const processedGraphData = useMemo(() => {
     if (!graphData) return null;
+
+    // Count links between same node pairs for curvature calculation
+    const linkCounts: Record<string, number> = {};
+    const linkIndices: Record<string, number> = {};
+
+    const processedLinks = graphData.links.map((link, index) => {
+      const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
+      const targetId = typeof link.target === 'string' ? link.target : link.target.id;
+      const pairKey = [sourceId, targetId].sort().join('|');
+
+      if (!linkCounts[pairKey]) {
+        linkCounts[pairKey] = 0;
+        linkIndices[pairKey] = 0;
+      }
+      linkCounts[pairKey]++;
+
+      return { ...link, index, pairKey };
+    });
+
+    // Second pass: assign curvature based on count
+    const linksWithCurvature = processedLinks.map((link) => {
+      const count = linkCounts[link.pairKey];
+      let curvature = 0;
+
+      if (count > 1) {
+        const idx = linkIndices[link.pairKey]++;
+        // Alternate positive/negative curvature for multiple links
+        curvature = 0.2 + (idx * 0.15);
+        if (idx % 2 === 1) curvature *= -1;
+      }
+
+      return { ...link, curvature };
+    });
+
     return {
       nodes: graphData.nodes,
-      links: graphData.links.map((link, index) => ({ ...link, index })),
+      links: linksWithCurvature,
     };
   }, [graphData]);
 
@@ -307,7 +341,7 @@ export function ForceGraphVisualization({
     linkTarget: 'target' as const,
     linkColor: getLinkColor,
     linkWidth: getLinkWidth,
-    linkCurvature: 0.2,
+    linkCurvature: (link: any) => link.curvature || 0,
     linkDirectionalParticles: 4,
     linkDirectionalParticleSpeed: 0.004,
     linkDirectionalParticleWidth: 2,
@@ -315,9 +349,20 @@ export function ForceGraphVisualization({
     onNodeClick: handleNodeClick,
     onLinkClick: handleLinkClick,
     onBackgroundClick: handleBackgroundClick,
-    cooldownTicks: 100,
-    warmupTicks: 50,
+    cooldownTicks: 200,
+    warmupTicks: 100,
     backgroundColor: isDark ? '#1a1a2e' : '#f8fafc',
+  };
+
+  // 2D-specific props
+  const props2D = {
+    ...commonProps,
+    d3VelocityDecay: 0.4,
+  };
+
+  // 3D-specific props (no d3VelocityDecay - uses different simulation)
+  const props3D = {
+    ...commonProps,
   };
 
   return (
@@ -346,7 +391,7 @@ export function ForceGraphVisualization({
       {is3D ? (
         <ForceGraph3D
           ref={graphRef3D}
-          {...(commonProps as any)}
+          {...(props3D as any)}
           nodeThreeObject={nodeThreeObject as any}
           nodeThreeObjectExtend={true}
           linkThreeObject={linkThreeObject as any}
@@ -357,7 +402,7 @@ export function ForceGraphVisualization({
       ) : (
         <ForceGraph2D
           ref={graphRef2D}
-          {...(commonProps as any)}
+          {...(props2D as any)}
           nodeCanvasObject={paintNode2D as any}
           nodeCanvasObjectMode={() => 'replace'}
           linkCanvasObject={paintLink2D as any}
