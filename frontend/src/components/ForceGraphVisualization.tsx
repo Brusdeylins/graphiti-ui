@@ -247,9 +247,10 @@ export function ForceGraphVisualization({
           const edgeIdx = obj.__edgeIndex;
           const isHighlighted = (nodeId && hlNodes.has(nodeId)) || (edgeIdx !== undefined && edgeIdx >= 0 && hlEdges.has(edgeIdx));
 
-          // Always show highlighted labels
+          // Always show highlighted labels at full opacity
           if (isHighlighted) {
             obj.visible = showLbls;
+            if (obj.material) obj.material.opacity = 1;
             return;
           }
 
@@ -263,7 +264,21 @@ export function ForceGraphVisualization({
 
           // Use edge threshold for smaller text (edge labels), node threshold for larger
           const threshold = obj.textHeight <= 3 ? edgeThreshold : nodeThreshold;
-          obj.visible = showLbls && dist < threshold;
+          const fadeStart = threshold * 1.5; // Start fading at 1.5x threshold distance
+
+          if (!showLbls || dist >= fadeStart) {
+            // Too far or labels disabled - invisible
+            obj.visible = false;
+          } else if (dist <= threshold) {
+            // Close enough - fully visible
+            obj.visible = true;
+            if (obj.material) obj.material.opacity = 1;
+          } else {
+            // In fade zone - interpolate opacity
+            obj.visible = true;
+            const fadeProgress = (fadeStart - dist) / (fadeStart - threshold); // 0 at fadeStart, 1 at threshold
+            if (obj.material) obj.material.opacity = fadeProgress;
+          }
         }
       });
 
@@ -351,15 +366,31 @@ export function ForceGraphVisualization({
       ctx.stroke();
     }
 
-    // Draw label if highlighted OR zoom is sufficient
-    if (showLabels && (isHighlighted || globalScale >= nodeLabelZoom)) {
-      const label = node.name || node.id;
-      const fontSize = Math.max(10, 12 / globalScale);
-      ctx.font = `${fontSize}px Sans-Serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillStyle = isDark ? '#fff' : '#000';
-      ctx.fillText(label, node.x || 0, (node.y || 0) + size + fontSize);
+    // Draw label with fade effect based on zoom
+    if (showLabels) {
+      const fadeStart = nodeLabelZoom * 0.67; // Start fading at 67% of threshold zoom
+      let opacity = 0;
+
+      if (isHighlighted) {
+        opacity = 1; // Highlighted always full opacity
+      } else if (globalScale >= nodeLabelZoom) {
+        opacity = 1; // Fully zoomed in
+      } else if (globalScale > fadeStart) {
+        // Fade zone - interpolate
+        opacity = (globalScale - fadeStart) / (nodeLabelZoom - fadeStart);
+      }
+
+      if (opacity > 0) {
+        const label = node.name || node.id;
+        const fontSize = Math.max(10, 12 / globalScale);
+        ctx.font = `${fontSize}px Sans-Serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.globalAlpha = opacity;
+        ctx.fillStyle = isDark ? '#fff' : '#000';
+        ctx.fillText(label, node.x || 0, (node.y || 0) + size + fontSize);
+        ctx.globalAlpha = 1; // Reset
+      }
     }
   }, [getNodeColor, nodeSize, highlightedNodes, showLabels, nodeLabelZoom, isDark]);
 
@@ -370,8 +401,20 @@ export function ForceGraphVisualization({
     const idx = typeof link.index === 'number' ? link.index : -1;
     const isHighlighted = highlightedEdges.has(idx);
 
-    // Only draw labels if highlighted OR zoom is sufficient
-    if (!isHighlighted && globalScale < edgeLabelZoom) return;
+    // Calculate opacity with fade effect
+    const fadeStart = edgeLabelZoom * 0.67; // Start fading at 67% of threshold zoom
+    let opacity = 0;
+
+    if (isHighlighted) {
+      opacity = 1; // Highlighted always full opacity
+    } else if (globalScale >= edgeLabelZoom) {
+      opacity = 1; // Fully zoomed in
+    } else if (globalScale > fadeStart) {
+      // Fade zone - interpolate
+      opacity = (globalScale - fadeStart) / (edgeLabelZoom - fadeStart);
+    }
+
+    if (opacity <= 0) return;
 
     const source = link.source as GraphNode;
     const target = link.target as GraphNode;
@@ -407,8 +450,10 @@ export function ForceGraphVisualization({
     ctx.font = `${fontSize}px Sans-Serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillStyle = isDark ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.7)';
+    ctx.globalAlpha = opacity * 0.7; // Base opacity is 0.7 for edge labels
+    ctx.fillStyle = isDark ? '#fff' : '#000';
     ctx.fillText(label, labelX, labelY);
+    ctx.globalAlpha = 1; // Reset
   }, [showLabels, edgeLabelZoom, isDark, highlightedEdges]);
 
   // 3D node object (sprite text for labels) - visibility controlled by animation loop
@@ -419,6 +464,8 @@ export function ForceGraphVisualization({
     sprite.backgroundColor = isDark ? 'rgba(0,0,0,0.5)' : 'rgba(255,255,255,0.5)';
     sprite.padding = 1;
     sprite.borderRadius = 2;
+    // Enable transparency for fade effect
+    if (sprite.material) (sprite.material as any).transparent = true;
     // Position below node (negative Y in 3D space)
     (sprite as any).position.y = -(nodeSize * 0.5 + 8);
     // Store node ID for highlight checking
@@ -436,6 +483,8 @@ export function ForceGraphVisualization({
     sprite.backgroundColor = isDark ? 'rgba(0,0,0,0.4)' : 'rgba(255,255,255,0.4)';
     sprite.padding = 1;
     sprite.borderRadius = 2;
+    // Enable transparency for fade effect
+    if (sprite.material) (sprite.material as any).transparent = true;
     // Store edge index for highlight checking
     (sprite as any).__edgeIndex = typeof link.index === 'number' ? link.index : -1;
     return sprite;
@@ -450,42 +499,37 @@ export function ForceGraphVisualization({
     const midY = (start.y + end.y) / 2;
     const midZ = (start.z + end.z) / 2;
 
-    // If link has curvature, offset label perpendicular to the line
+    // If link has curvature, calculate position matching three-forcegraph's exact curve formula
     const curvature = link?.curvature || 0;
     if (curvature !== 0) {
-      // Calculate perpendicular offset in 3D
       // Direction vector from start to end
       const dx = end.x - start.x;
       const dy = end.y - start.y;
       const dz = end.z - start.z;
-      const len = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
 
-      // react-force-graph-3d curves bend perpendicular to link in a plane
-      // Cross product of link direction with Z-axis [0,0,1] gives horizontal perpendicular
-      // Cross: (dx,dy,dz) × (0,0,1) = (dy*1 - dz*0, dz*0 - dx*1, dx*0 - dy*0) = (dy, -dx, 0)
-      let perpX = dy;
-      let perpY = -dx;
-      let perpZ = 0;
+      // three-forcegraph calculates control point as:
+      // cp = vLine * curvature cross (0,0,1) + midpoint
+      // vLine × (0,0,1) = (dy, -dx, 0) - unnormalized!
+      // For purely vertical links (dx=0, dy=0), use Y-axis: vLine × (0,1,0) = (dz, 0, -dx) = (dz, 0, 0)
+      let cpOffsetX: number, cpOffsetY: number, cpOffsetZ: number;
 
-      // Normalize the perpendicular vector
-      const perpLen = Math.sqrt(perpX * perpX + perpY * perpY) || 1;
-      perpX /= perpLen;
-      perpY /= perpLen;
-
-      // If link is nearly vertical (perpLen small), use different reference
-      if (perpLen < 0.1) {
-        // Cross with X-axis instead: (dx,dy,dz) × (1,0,0) = (0, dz, -dy)
-        perpX = 0;
-        perpY = dz / len;
-        perpZ = -dy / len;
+      if (dx !== 0 || dy !== 0) {
+        // Cross with Z-axis: (dx,dy,dz) × (0,0,1) = (dy*1 - dz*0, dz*0 - dx*1, dx*0 - dy*0) = (dy, -dx, 0)
+        cpOffsetX = dy * curvature;
+        cpOffsetY = -dx * curvature;
+        cpOffsetZ = 0;
+      } else {
+        // Cross with Y-axis: (dx,dy,dz) × (0,1,0) = (dy*0 - dz*1, dz*0 - dx*0, dx*1 - dy*0) = (-dz, 0, dx)
+        cpOffsetX = -dz * curvature;
+        cpOffsetY = 0;
+        cpOffsetZ = dx * curvature; // dx is 0 here, so this is 0
       }
 
-      // Offset magnitude based on curvature and distance
-      const offset = curvature * len * 0.25;
-
-      sprite.position.x = midX + perpX * offset;
-      sprite.position.y = midY + perpY * offset;
-      sprite.position.z = midZ + perpZ * offset;
+      // Control point = midpoint + cpOffset
+      // Bezier at t=0.5: P = 0.25*start + 0.5*control + 0.25*end = midpoint + 0.5*cpOffset
+      sprite.position.x = midX + cpOffsetX * 0.5;
+      sprite.position.y = midY + cpOffsetY * 0.5;
+      sprite.position.z = midZ + cpOffsetZ * 0.5;
     } else {
       sprite.position.x = midX;
       sprite.position.y = midY;
