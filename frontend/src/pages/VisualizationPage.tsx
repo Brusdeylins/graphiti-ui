@@ -1020,6 +1020,16 @@ export function VisualizationPage() {
           const uniqueGroups = [...new Set(response.data.nodes.map((n: Node) => n.group_id).filter(Boolean))];
           setGroups(uniqueGroups as string[]);
         }
+
+        // Load entity types for edit mode (if not already loaded)
+        if (entityTypes.length === 0) {
+          try {
+            const etResponse = await api.get('/entity-types');
+            setEntityTypes(etResponse.data?.entity_types || []);
+          } catch (err) {
+            console.error('Failed to load entity types:', err);
+          }
+        }
       } catch (err: any) {
         setError(err.response?.data?.detail || 'Failed to load graph data');
       } finally {
