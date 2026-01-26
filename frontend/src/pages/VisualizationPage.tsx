@@ -621,16 +621,21 @@ export function VisualizationPage() {
   };
 
   const handleCreateEdge = async () => {
-    if (!edgeSourceNode || !edgeTargetNode || !newEdgeType.trim() || !selectedGroup) {
-      setAlertMessage({ type: 'error', title: 'Missing Data', message: 'Please select source/target nodes, enter relationship type, and select a group' });
+    const missing: string[] = [];
+    if (!edgeSourceNode) missing.push('source node');
+    if (!edgeTargetNode) missing.push('target node');
+    if (!newEdgeType.trim()) missing.push('relationship type');
+    if (!selectedGroup) missing.push('group');
+    if (missing.length > 0) {
+      setAlertMessage({ type: 'error', title: 'Missing Data', message: `Please provide: ${missing.join(', ')}` });
       return;
     }
 
     setIsSaving(true);
     try {
       const response = await api.post('/graph/edge/direct', {
-        source_uuid: edgeSourceNode.id,
-        target_uuid: edgeTargetNode.id,
+        source_uuid: edgeSourceNode!.id,
+        target_uuid: edgeTargetNode!.id,
         relationship_type: newEdgeType.trim().toUpperCase().replace(/\s+/g, '_'),
         fact: newEdgeFact.trim(),
         group_id: selectedGroup,
@@ -1118,6 +1123,21 @@ export function VisualizationPage() {
             onNodeClick={(node) => handleNodeClick(node as Node, graphData!.edges)}
             onEdgeClick={(edge) => handleEdgeClick(edge as Edge, edge.index || 0)}
             onBackgroundClick={clearSelection}
+            hasSelectedNode={selectedNode !== null && !!selectedGroup}
+            onShiftClickNode={(target) => {
+              // Shift+Click only works when a group is selected and a node is selected
+              if (selectedNode && selectedGroup && target.id !== selectedNode.id) {
+                const targetNode = graphData?.nodes.find(n => n.id === target.id);
+                if (targetNode) {
+                  setEdgeSourceNode(selectedNode);
+                  setEdgeTargetNode(targetNode);
+                  setShowCreateEdgeModal(true);
+                }
+              } else {
+                // No node/group selected - treat as normal click to select
+                handleNodeClick(target as Node, graphData!.edges);
+              }
+            }}
             highlightedNodes={highlightedNodes}
             highlightedEdges={highlightedEdges}
             linkDistance={linkDistance}
@@ -1820,7 +1840,7 @@ export function VisualizationPage() {
                         onChange={e => handleEntityTypeChange(e.target.value)}
                       >
                         <option value="__custom__">Custom Type...</option>
-                        {entityTypes.map(et => (
+                        {entityTypes.slice().sort((a, b) => a.name.localeCompare(b.name)).map(et => (
                           <option key={et.name} value={et.name}>
                             {et.name}
                           </option>
@@ -1974,7 +1994,7 @@ export function VisualizationPage() {
                       }}
                     >
                       <option value="">Select source...</option>
-                      {graphData?.nodes.map(n => (
+                      {graphData?.nodes.slice().sort((a, b) => a.name.localeCompare(b.name)).map(n => (
                         <option key={n.id} value={n.id}>{n.name}</option>
                       ))}
                     </select>
@@ -1990,7 +2010,7 @@ export function VisualizationPage() {
                       }}
                     >
                       <option value="">Select target...</option>
-                      {graphData?.nodes.map(n => (
+                      {graphData?.nodes.slice().sort((a, b) => a.name.localeCompare(b.name)).map(n => (
                         <option key={n.id} value={n.id}>{n.name}</option>
                       ))}
                     </select>

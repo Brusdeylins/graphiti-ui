@@ -61,6 +61,8 @@ interface ForceGraphVisualizationProps {
   onNodeClick?: (node: GraphNode) => void;
   onEdgeClick?: (edge: GraphEdge) => void;
   onBackgroundClick?: () => void;
+  onShiftClickNode?: (targetNode: GraphNode) => void;
+  hasSelectedNode?: boolean;
   highlightedNodes?: Set<string>;
   highlightedEdges?: Set<number>;
   // Layout parameters
@@ -90,6 +92,8 @@ export function ForceGraphVisualization({
   onNodeClick,
   onEdgeClick,
   onBackgroundClick,
+  onShiftClickNode,
+  hasSelectedNode = false,
   highlightedNodes = new Set(),
   highlightedEdges = new Set(),
   linkDistance = 150,
@@ -130,6 +134,7 @@ export function ForceGraphVisualization({
   const panStartRef = useRef({ x: 0, y: 0 });
   const centerStartRef = useRef({ x: 0, y: 0 });
 
+
   // Build type color map
   const typeColors = useMemo(() => {
     if (!graphData) return {};
@@ -148,11 +153,11 @@ export function ForceGraphVisualization({
     return typeColors[node.type] || defaultColor;
   }, [typeColors, highlightedNodes]);
 
-  // 2D link color (more transparent)
+  // 2D link color (more transparent, including highlight for particle visibility)
   const getLinkColor2D = useCallback((link: GraphEdge) => {
     const idx = typeof link.index === 'number' ? link.index : -1;
     if (highlightedEdges.has(idx)) {
-      return highlightColor;
+      return 'rgba(255,171,0,0.4)'; // Transparent highlight so particles are visible
     }
     return isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.2)';
   }, [highlightedEdges, isDark]);
@@ -161,16 +166,16 @@ export function ForceGraphVisualization({
   const getLinkColor3D = useCallback((link: GraphEdge) => {
     const idx = typeof link.index === 'number' ? link.index : -1;
     if (highlightedEdges.has(idx)) {
-      return highlightColor;
+      return 'rgba(255,171,0,0.4)'; // Transparent highlight so particles are visible
     }
     return isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.4)';
   }, [highlightedEdges, isDark]);
 
-  // Particle color (transparent)
+  // Particle color - full yellow for highlighted edges
   const getParticleColor = useCallback((link: GraphEdge) => {
     const idx = typeof link.index === 'number' ? link.index : -1;
     if (highlightedEdges.has(idx)) {
-      return 'rgba(255,171,0,0.6)'; // Highlight color with transparency
+      return '#ffab00'; // Full highlight color for visibility
     }
     return isDark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.4)';
   }, [highlightedEdges, isDark]);
@@ -332,10 +337,14 @@ export function ForceGraphVisualization({
     }
   }, [linkDistance, chargeStrength, centerStrength, is3D]);
 
-  // Handle node click
-  const handleNodeClick = useCallback((node: GraphNode) => {
-    onNodeClick?.(node);
-  }, [onNodeClick]);
+  // Handle node click - check for Shift key for edge creation
+  const handleNodeClick = useCallback((node: GraphNode, event: MouseEvent) => {
+    if (event?.shiftKey && onShiftClickNode) {
+      onShiftClickNode(node);
+    } else {
+      onNodeClick?.(node);
+    }
+  }, [onNodeClick, onShiftClickNode]);
 
   // Handle link click
   const handleLinkClick = useCallback((link: GraphEdge) => {
@@ -746,6 +755,7 @@ export function ForceGraphVisualization({
           <span>🖱️ Right: Pan</span>
           <span>⚙️ Wheel: Zoom</span>
           <span>🖱️ Middle: Fit All</span>
+          {hasSelectedNode && <span>⇧ Shift+Click: Target for new edge</span>}
         </div>
       </div>
 
