@@ -53,9 +53,18 @@ interface Edge {
   originalIndex?: number;
 }
 
+interface GraphStats {
+  node_count: number;
+  edge_count: number;
+  episode_count?: number;
+  episode_edge_count?: number;
+  label_count: number;
+}
+
 interface GraphData {
   nodes: Node[];
   edges: Edge[];
+  stats?: GraphStats;
 }
 
 interface Episode {
@@ -1077,6 +1086,14 @@ export function VisualizationPage() {
                   <span className={graphData.edges.length >= limit * 2 ? 'text-danger fw-bold' : ''}>
                     {graphData.edges.length} Edges
                   </span>
+                  {graphData.stats?.episode_count != null && graphData.stats.episode_count > 0 && (
+                    <>
+                      {' • '}
+                      <span title={`${graphData.stats.episode_edge_count || 0} episode references`}>
+                        {graphData.stats.episode_count} Episodes
+                      </span>
+                    </>
+                  )}
                 </span>
               )}
               {(queueStatus?.currently_processing ?? 0) > 0 && (
