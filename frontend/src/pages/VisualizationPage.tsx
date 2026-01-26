@@ -819,6 +819,7 @@ export function VisualizationPage() {
           ...selectedNode,
           name: updatedName,
           summary: updatedSummary,
+          attributes: filteredAttributes,
         });
 
         // Update node in graphData without full reload
@@ -827,7 +828,7 @@ export function VisualizationPage() {
             ...graphData,
             nodes: graphData.nodes.map(n =>
               n.id === selectedNode.id
-                ? { ...n, name: updatedName, summary: updatedSummary }
+                ? { ...n, name: updatedName, summary: updatedSummary, attributes: filteredAttributes }
                 : n
             ),
           });
