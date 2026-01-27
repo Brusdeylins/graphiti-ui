@@ -277,9 +277,20 @@ export function VisualizationPage() {
   // Memoize graph data for ForceGraph to prevent unnecessary simulation restarts
   const forceGraphData = useMemo(() => {
     if (!graphData) return null;
+
+    // Build set of valid node IDs for edge filtering
+    const nodeIds = new Set(graphData.nodes.map(n => n.id));
+
+    // Filter edges: only include those with valid source and target
+    const validEdges = graphData.edges.filter(e => {
+      const src = typeof e.source === 'string' ? e.source : e.source?.id;
+      const tgt = typeof e.target === 'string' ? e.target : e.target?.id;
+      return src && tgt && nodeIds.has(src) && nodeIds.has(tgt);
+    });
+
     return {
       nodes: graphData.nodes as GraphNode[],
-      links: graphData.edges.map((e, i) => ({ ...e, index: i })) as GraphEdge[],
+      links: validEdges.map((e, i) => ({ ...e, index: i })) as GraphEdge[],
     };
   }, [graphData]);
 
@@ -395,8 +406,9 @@ export function VisualizationPage() {
     const connectedEdgeIndices = new Set<number>();
 
     edges.forEach((edge, index) => {
-      const sourceId = typeof edge.source === 'string' ? edge.source : edge.source.id;
-      const targetId = typeof edge.target === 'string' ? edge.target : edge.target.id;
+      const sourceId = typeof edge.source === 'string' ? edge.source : edge.source?.id;
+      const targetId = typeof edge.target === 'string' ? edge.target : edge.target?.id;
+      if (!sourceId || !targetId) return; // Skip edges with missing source/target
 
       if (sourceId === node.id || targetId === node.id) {
         connectedNodes.add(sourceId);
@@ -445,10 +457,10 @@ export function VisualizationPage() {
     setSelectedNode(null);
     setExpandedEpisode(null); // Reset expanded episode when selecting new edge
 
-    const sourceId = typeof edge.source === 'string' ? edge.source : edge.source.id;
-    const targetId = typeof edge.target === 'string' ? edge.target : edge.target.id;
+    const sourceId = typeof edge.source === 'string' ? edge.source : edge.source?.id;
+    const targetId = typeof edge.target === 'string' ? edge.target : edge.target?.id;
 
-    setHighlightedNodes(new Set([sourceId, targetId]));
+    setHighlightedNodes(new Set([sourceId, targetId].filter(Boolean) as string[]));
     setHighlightedEdges(new Set([edgeIndex]));
 
     // Pre-load episodes for this edge (using ref to avoid dependency)

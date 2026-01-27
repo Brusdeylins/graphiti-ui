@@ -79,14 +79,14 @@ async def get_graph_data(
         ]
 
         # Transform edges to frontend expected format
-        # Backend: source_node_uuid, target_node_uuid, type, name, fact, uuid, created_at, valid_at, expired_at
+        # MCP Backend now returns: source, target (UUIDs), type, name, fact, uuid, etc.
         # Frontend expects: source, target, type, fact, plus metadata
         # Note: Graphiti stores actual relationship name in 'name' field,
         # while type(r) is always 'RELATES_TO'
         transformed_edges = [
             {
-                "source": edge.get("source_node_uuid", ""),
-                "target": edge.get("target_node_uuid", ""),
+                "source": edge.get("source", ""),
+                "target": edge.get("target", ""),
                 "type": edge.get("name") or edge.get("type", "RELATES_TO"),
                 "fact": edge.get("fact", ""),
                 "uuid": edge.get("uuid", ""),
