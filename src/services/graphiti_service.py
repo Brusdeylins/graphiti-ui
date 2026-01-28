@@ -90,11 +90,10 @@ class GraphitiClient:
         try:
             driver = self._get_driver(group_id)
 
-            # Query nodes
+            # Query nodes - return full node to get all properties including attributes
             nodes_query = """
             MATCH (n:Entity)
-            RETURN n.uuid AS uuid, n.name AS name, n.summary AS summary,
-                   n.group_id AS group_id, n.created_at AS created_at, labels(n) AS labels
+            RETURN n, labels(n) AS labels
             LIMIT $limit
             """
             nodes_result, _, _ = await driver.execute_query(nodes_query, limit=limit)
@@ -108,20 +107,31 @@ class GraphitiClient:
             """
             edges_result, _, _ = await driver.execute_query(edges_query, limit=limit)
 
-            # Transform nodes
+            # Transform nodes - extract all properties from node object
             nodes = []
             for record in nodes_result:
+                node_data = record.get("n", {})
                 labels = record.get("labels", [])
                 if "Entity" in labels:
                     labels = [l for l in labels if l != "Entity"]
+
+                # Extract attributes (all properties except standard ones)
+                standard_props = {"uuid", "name", "summary", "group_id", "created_at",
+                                  "name_embedding", "summary_embedding"}
+                attributes = {
+                    k: v for k, v in node_data.items()
+                    if k not in standard_props and not k.endswith("_embedding")
+                }
+
                 nodes.append({
-                    "uuid": record["uuid"],
-                    "name": record["name"],
-                    "summary": record.get("summary", ""),
-                    "group_id": record.get("group_id", ""),
-                    "created_at": record.get("created_at"),
+                    "uuid": node_data.get("uuid"),
+                    "name": node_data.get("name"),
+                    "summary": node_data.get("summary", ""),
+                    "group_id": node_data.get("group_id", ""),
+                    "created_at": node_data.get("created_at"),
                     "labels": labels,
                     "entity_type": labels[0] if labels else "Entity",
+                    "attributes": attributes,
                 })
 
             # Transform edges
