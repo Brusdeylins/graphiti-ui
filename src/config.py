@@ -20,10 +20,22 @@ class Settings(BaseSettings):
     app_name: str = "Graphiti"
     debug: bool = False
 
-    # Graphiti MCP Server
+    # Graphiti MCP Server (optional, for MCP-specific features)
     graphiti_mcp_url: str = "http://graphiti-mcp:8000"
     graphiti_mcp_external_url: str = "http://localhost:8000"
     graphiti_mcp_container: str = "graphiti-mcp"  # Container name for restart
+
+    # FalkorDB Direct Connection
+    falkordb_host: str = "falkordb"
+    falkordb_port: int = 6379
+    falkordb_password: str = ""
+    falkordb_database: str = "graphiti"
+
+    # LLM Configuration (for embeddings)
+    openai_api_key: str = ""
+    openai_api_url: str = "https://api.openai.com/v1"
+    embedding_model: str = "text-embedding-3-small"
+    embedding_dim: int = 1536
 
     # FalkorDB Browser (for external links)
     falkordb_browser_url: str = "http://localhost:3000"

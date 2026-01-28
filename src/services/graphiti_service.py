@@ -1,52 +1,586 @@
-"""Graphiti MCP Server communication service.
+"""Graphiti service with direct graphiti_core integration.
 
-Provides methods to interact with the Graphiti MCP server for
-searching nodes, facts, and managing episodes.
+Replaces HTTP-based MCP proxy with direct FalkorDB connection.
 """
 
-import httpx
+import logging
+from datetime import datetime, timezone
 from typing import Any
+from uuid import uuid4
+
+import httpx
+from graphiti_core.driver.falkordb_driver import FalkorDriver
+from graphiti_core.edges import EntityEdge
+from graphiti_core.embedder import OpenAIEmbedder, OpenAIEmbedderConfig
+from graphiti_core.errors import EdgeNotFoundError, NodeNotFoundError
+from graphiti_core.nodes import EntityNode, EpisodicNode
 
 from ..config import get_settings
 
+logger = logging.getLogger(__name__)
+
 
 class GraphitiClient:
-    """Client for Graphiti MCP Server."""
+    """Client for direct Graphiti operations via graphiti_core."""
 
     def __init__(self):
         self.settings = get_settings()
-        self.base_url = self.settings.graphiti_mcp_url
+        self._driver: FalkorDriver | None = None
+        self._embedder: OpenAIEmbedder | None = None
+
+    @property
+    def driver(self) -> FalkorDriver:
+        """Lazy-initialize FalkorDB driver."""
+        if self._driver is None:
+            self._driver = FalkorDriver(
+                host=self.settings.falkordb_host,
+                port=self.settings.falkordb_port,
+                password=self.settings.falkordb_password or None,
+                database=self.settings.falkordb_database,
+            )
+        return self._driver
+
+    @property
+    def embedder(self) -> OpenAIEmbedder:
+        """Lazy-initialize OpenAI embedder."""
+        if self._embedder is None:
+            config = OpenAIEmbedderConfig(
+                api_key=self.settings.openai_api_key,
+                base_url=self.settings.openai_api_url,
+                embedding_model=self.settings.embedding_model,
+                embedding_dim=self.settings.embedding_dim,
+            )
+            self._embedder = OpenAIEmbedder(config)
+        return self._embedder
+
+    def _get_driver(self, group_id: str | None = None) -> FalkorDriver:
+        """Get driver for specific group_id (cloned if needed)."""
+        if group_id:
+            return self.driver.clone(group_id)  # type: ignore[return-value]
+        return self.driver
+
+    # =========================================================================
+    # Health & Status
+    # =========================================================================
 
     async def health_check(self) -> dict:
-        """Check if the MCP server is healthy."""
+        """Check if FalkorDB is healthy."""
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                response = await client.get(f"{self.base_url}/health")
-                if response.status_code == 200:
-                    return {"healthy": True, "data": response.json()}
-                return {"healthy": False, "error": f"Status {response.status_code}"}
+            await self.driver.health_check()
+            return {"healthy": True, "data": {"status": "healthy", "service": "graphiti-ui"}}
         except Exception as e:
             return {"healthy": False, "error": str(e)}
 
     async def get_status(self) -> dict:
         """Get server status including graph statistics."""
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.get(f"{self.base_url}/status")
-                if response.status_code == 200:
-                    return {"success": True, "data": response.json()}
-                return {"success": False, "error": f"Status {response.status_code}"}
+            stats = await self.get_graph_stats()
+            return {"success": True, "data": stats}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    async def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> dict:
-        """Call an MCP tool via the server.
+    # =========================================================================
+    # Graph Data (for visualization)
+    # =========================================================================
 
-        The Graphiti MCP server exposes tools via JSON-RPC at /mcp/ endpoint.
-        """
+    async def get_graph_data(self, limit: int = 500, group_id: str | None = None) -> dict:
+        """Get graph data for visualization."""
+        try:
+            driver = self._get_driver(group_id)
+
+            # Query nodes
+            nodes_query = """
+            MATCH (n:Entity)
+            RETURN n.uuid AS uuid, n.name AS name, n.summary AS summary,
+                   n.group_id AS group_id, n.created_at AS created_at, labels(n) AS labels
+            LIMIT $limit
+            """
+            nodes_result, _, _ = await driver.execute_query(nodes_query, limit=limit)
+
+            # Query edges
+            edges_query = """
+            MATCH (a:Entity)-[r:RELATES_TO]->(b:Entity)
+            RETURN a.uuid AS source, b.uuid AS target, r.uuid AS uuid,
+                   r.name AS name, r.fact AS fact, r.group_id AS group_id
+            LIMIT $limit
+            """
+            edges_result, _, _ = await driver.execute_query(edges_query, limit=limit)
+
+            # Transform nodes
+            nodes = []
+            for record in nodes_result:
+                labels = record.get("labels", [])
+                if "Entity" in labels:
+                    labels = [l for l in labels if l != "Entity"]
+                nodes.append({
+                    "uuid": record["uuid"],
+                    "name": record["name"],
+                    "summary": record.get("summary", ""),
+                    "group_id": record.get("group_id", ""),
+                    "created_at": record.get("created_at"),
+                    "labels": labels,
+                    "entity_type": labels[0] if labels else "Entity",
+                })
+
+            # Transform edges
+            edges = []
+            for record in edges_result:
+                edges.append({
+                    "uuid": record["uuid"],
+                    "source": record["source"],
+                    "target": record["target"],
+                    "name": record.get("name", ""),
+                    "fact": record.get("fact", ""),
+                    "group_id": record.get("group_id", ""),
+                })
+
+            return {"success": True, "nodes": nodes, "edges": edges}
+        except Exception as e:
+            logger.exception("Error getting graph data")
+            return {"success": False, "nodes": [], "edges": [], "error": str(e)}
+
+    async def get_group_ids(self) -> dict:
+        """Get all available group IDs."""
+        try:
+            # FalkorDB stores each group as a separate graph/database
+            # We need to query Redis for available graphs
+            # For now, query the default database for group_ids
+            query = """
+            MATCH (n)
+            WHERE n.group_id IS NOT NULL
+            RETURN DISTINCT n.group_id AS group_id
+            LIMIT 100
+            """
+            records, _, _ = await self.driver.execute_query(query)
+            group_ids = [r["group_id"] for r in records if r.get("group_id")]
+
+            # Also check for graphs via Redis KEYS pattern
+            # FalkorDB stores graphs as Redis keys
+            try:
+                import redis.asyncio as redis_async
+                r = redis_async.Redis(
+                    host=self.settings.falkordb_host,
+                    port=self.settings.falkordb_port,
+                    password=self.settings.falkordb_password or None,
+                    decode_responses=True,
+                )
+                # FalkorDB graphs are stored without prefix by default
+                keys = await r.keys("*")
+                for key in keys:
+                    key_type = await r.type(key)
+                    # FalkorDB graphs are stored as module types or hashes
+                    if key_type in ("graphdata", "module"):
+                        if key not in group_ids and not key.startswith("_"):
+                            group_ids.append(key)
+                await r.aclose()
+            except Exception:
+                pass
+
+            return {"success": True, "group_ids": sorted(set(group_ids))}
+        except Exception as e:
+            logger.exception("Error getting group IDs")
+            return {"success": False, "group_ids": [], "error": str(e)}
+
+    async def get_graph_stats(self, group_id: str | None = None) -> dict:
+        """Get graph statistics."""
+        try:
+            driver = self._get_driver(group_id)
+
+            # Count nodes
+            node_query = "MATCH (n:Entity) RETURN count(n) AS count"
+            node_result, _, _ = await driver.execute_query(node_query)
+            node_count = node_result[0]["count"] if node_result else 0
+
+            # Count edges
+            edge_query = "MATCH ()-[r:RELATES_TO]->() RETURN count(r) AS count"
+            edge_result, _, _ = await driver.execute_query(edge_query)
+            edge_count = edge_result[0]["count"] if edge_result else 0
+
+            # Count episodes
+            episode_query = "MATCH (e:Episodic) RETURN count(e) AS count"
+            episode_result, _, _ = await driver.execute_query(episode_query)
+            episode_count = episode_result[0]["count"] if episode_result else 0
+
+            return {
+                "success": True,
+                "stats": {
+                    "nodes": node_count,
+                    "edges": edge_count,
+                    "episodes": episode_count,
+                },
+            }
+        except Exception as e:
+            logger.exception("Error getting graph stats")
+            return {"success": False, "stats": {}, "error": str(e)}
+
+    # =========================================================================
+    # Node Operations
+    # =========================================================================
+
+    async def get_node_details(self, uuid: str, group_id: str | None = None) -> dict:
+        """Get detailed information about a specific node."""
+        try:
+            driver = self._get_driver(group_id)
+            node = await EntityNode.get_by_uuid(driver, uuid)
+            return {
+                "success": True,
+                "node": {
+                    "uuid": node.uuid,
+                    "name": node.name,
+                    "summary": node.summary,
+                    "group_id": node.group_id,
+                    "labels": node.labels,
+                    "attributes": node.attributes,
+                    "created_at": node.created_at.isoformat() if node.created_at else None,
+                },
+            }
+        except NodeNotFoundError:
+            return {"success": False, "error": f"Node {uuid} not found"}
+        except Exception as e:
+            logger.exception("Error getting node details")
+            return {"success": False, "error": str(e)}
+
+    async def create_entity_direct(
+        self,
+        name: str,
+        entity_type: str = "Entity",
+        summary: str = "",
+        group_id: str | None = None,
+        attributes: dict[str, str] | None = None,
+    ) -> dict:
+        """Create an entity node directly with embeddings."""
+        try:
+            driver = self._get_driver(group_id)
+
+            labels = [entity_type] if entity_type and entity_type != "Entity" else []
+
+            entity = EntityNode(
+                uuid=str(uuid4()),
+                name=name,
+                summary=summary,
+                group_id=group_id or self.settings.falkordb_database,
+                labels=labels,
+                attributes=attributes or {},
+                created_at=datetime.now(timezone.utc),
+            )
+
+            # Generate embeddings
+            await entity.generate_name_embedding(self.embedder)
+            if summary:
+                await entity.generate_summary_embedding(self.embedder)
+
+            # Save to database
+            await entity.save(driver)
+
+            return {
+                "success": True,
+                "uuid": entity.uuid,
+                "name": entity.name,
+                "entity_type": entity_type,
+            }
+        except Exception as e:
+            logger.exception("Error creating entity")
+            return {"success": False, "error": str(e)}
+
+    async def update_entity_node(
+        self,
+        uuid: str,
+        name: str | None = None,
+        summary: str | None = None,
+        group_id: str | None = None,
+        attributes: dict[str, str | None] | None = None,
+    ) -> dict:
+        """Update an entity node."""
+        try:
+            driver = self._get_driver(group_id)
+            entity = await EntityNode.get_by_uuid(driver, uuid)
+
+            # Update fields
+            if name is not None:
+                entity.name = name
+            if summary is not None:
+                entity.summary = summary
+            if attributes:
+                for key, value in attributes.items():
+                    if value is None:
+                        entity.attributes.pop(key, None)
+                    else:
+                        entity.attributes[key] = value
+
+            # Regenerate embeddings if name or summary changed
+            if name is not None:
+                await entity.generate_name_embedding(self.embedder)
+            if summary is not None and entity.summary:
+                await entity.generate_summary_embedding(self.embedder)
+
+            # Save changes
+            await entity.save(driver)
+
+            return {"success": True, "uuid": uuid}
+        except NodeNotFoundError:
+            return {"success": False, "error": f"Node {uuid} not found"}
+        except Exception as e:
+            logger.exception("Error updating entity")
+            return {"success": False, "error": str(e)}
+
+    async def delete_entity_node(self, uuid: str, group_id: str | None = None) -> dict:
+        """Delete an entity node."""
+        try:
+            driver = self._get_driver(group_id)
+            entity = await EntityNode.get_by_uuid(driver, uuid)
+            await entity.delete(driver)
+            return {"success": True, "deleted": uuid}
+        except NodeNotFoundError:
+            return {"success": False, "error": f"Node {uuid} not found"}
+        except Exception as e:
+            logger.exception("Error deleting entity")
+            return {"success": False, "error": str(e)}
+
+    # =========================================================================
+    # Edge Operations
+    # =========================================================================
+
+    async def get_edge_details(self, uuid: str, group_id: str | None = None) -> dict:
+        """Get detailed information about a specific edge."""
+        try:
+            driver = self._get_driver(group_id)
+            edge = await EntityEdge.get_by_uuid(driver, uuid)
+            return {
+                "success": True,
+                "edge": {
+                    "uuid": edge.uuid,
+                    "name": edge.name,
+                    "fact": edge.fact,
+                    "source_node_uuid": edge.source_node_uuid,
+                    "target_node_uuid": edge.target_node_uuid,
+                    "group_id": edge.group_id,
+                    "episodes": edge.episodes,
+                    "attributes": edge.attributes,
+                    "created_at": edge.created_at.isoformat() if edge.created_at else None,
+                    "valid_at": edge.valid_at.isoformat() if edge.valid_at else None,
+                    "invalid_at": edge.invalid_at.isoformat() if edge.invalid_at else None,
+                },
+            }
+        except EdgeNotFoundError:
+            return {"success": False, "error": f"Edge {uuid} not found"}
+        except Exception as e:
+            logger.exception("Error getting edge details")
+            return {"success": False, "error": str(e)}
+
+    async def create_edge_direct(
+        self,
+        source_uuid: str,
+        target_uuid: str,
+        name: str,
+        fact: str = "",
+        group_id: str | None = None,
+    ) -> dict:
+        """Create an edge directly with embeddings."""
+        try:
+            driver = self._get_driver(group_id)
+
+            edge = EntityEdge(
+                uuid=str(uuid4()),
+                source_node_uuid=source_uuid,
+                target_node_uuid=target_uuid,
+                name=name,
+                fact=fact or f"{name} relationship",
+                group_id=group_id or self.settings.falkordb_database,
+                episodes=[],
+                created_at=datetime.now(timezone.utc),
+            )
+
+            # Generate embedding for fact
+            if fact:
+                await edge.generate_embedding(self.embedder)
+
+            # Save to database
+            await edge.save(driver)
+
+            return {
+                "success": True,
+                "uuid": edge.uuid,
+                "name": edge.name,
+            }
+        except Exception as e:
+            logger.exception("Error creating edge")
+            return {"success": False, "error": str(e)}
+
+    async def update_entity_edge(
+        self,
+        uuid: str,
+        name: str | None = None,
+        fact: str | None = None,
+        group_id: str | None = None,
+    ) -> dict:
+        """Update an entity edge."""
+        try:
+            driver = self._get_driver(group_id)
+            edge = await EntityEdge.get_by_uuid(driver, uuid)
+
+            # Update fields
+            if name is not None:
+                edge.name = name
+            if fact is not None:
+                edge.fact = fact
+
+            # Regenerate embedding if fact changed
+            if fact is not None:
+                await edge.generate_embedding(self.embedder)
+
+            # Save changes
+            await edge.save(driver)
+
+            return {"success": True, "uuid": uuid}
+        except EdgeNotFoundError:
+            return {"success": False, "error": f"Edge {uuid} not found"}
+        except Exception as e:
+            logger.exception("Error updating edge")
+            return {"success": False, "error": str(e)}
+
+    async def delete_entity_edge(self, uuid: str, group_id: str | None = None) -> dict:
+        """Delete an entity edge."""
+        try:
+            driver = self._get_driver(group_id)
+            edge = await EntityEdge.get_by_uuid(driver, uuid)
+            await edge.delete(driver)
+            return {"success": True, "deleted": uuid}
+        except EdgeNotFoundError:
+            return {"success": False, "error": f"Edge {uuid} not found"}
+        except Exception as e:
+            logger.exception("Error deleting edge")
+            return {"success": False, "error": str(e)}
+
+    # =========================================================================
+    # Episode Operations
+    # =========================================================================
+
+    async def get_episode_details(self, uuid: str, group_id: str | None = None) -> dict:
+        """Get detailed information about a specific episode."""
+        try:
+            driver = self._get_driver(group_id)
+            episode = await EpisodicNode.get_by_uuid(driver, uuid)
+            return {
+                "success": True,
+                "episode": {
+                    "uuid": episode.uuid,
+                    "name": episode.name,
+                    "content": episode.content,
+                    "source": episode.source.value,
+                    "source_description": episode.source_description,
+                    "group_id": episode.group_id,
+                    "entity_edges": episode.entity_edges,
+                    "created_at": episode.created_at.isoformat() if episode.created_at else None,
+                    "valid_at": episode.valid_at.isoformat() if episode.valid_at else None,
+                },
+            }
+        except NodeNotFoundError:
+            return {"success": False, "error": f"Episode {uuid} not found"}
+        except Exception as e:
+            logger.exception("Error getting episode details")
+            return {"success": False, "error": str(e)}
+
+    async def get_episodes(self, limit: int = 10, group_ids: list[str] | None = None) -> dict:
+        """Get recent episodes."""
+        try:
+            if group_ids:
+                driver = self._get_driver(group_ids[0])
+            else:
+                driver = self.driver
+
+            episodes = await EpisodicNode.get_by_group_ids(
+                driver,
+                group_ids=group_ids or [self.settings.falkordb_database],
+                limit=limit,
+            )
+
+            return {
+                "success": True,
+                "data": {
+                    "result": {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": str([{
+                                    "uuid": ep.uuid,
+                                    "name": ep.name,
+                                    "content": ep.content[:200] + "..." if len(ep.content) > 200 else ep.content,
+                                    "source": ep.source.value,
+                                    "group_id": ep.group_id,
+                                    "created_at": ep.created_at.isoformat() if ep.created_at else None,
+                                } for ep in episodes]),
+                            }
+                        ],
+                    },
+                },
+            }
+        except Exception as e:
+            logger.exception("Error getting episodes")
+            return {"success": False, "error": str(e)}
+
+    async def delete_episode(self, episode_uuid: str) -> dict:
+        """Delete an episode."""
+        try:
+            # Episodes don't have group_id in the API, so use default driver
+            episode = await EpisodicNode.get_by_uuid(self.driver, episode_uuid)
+            driver = self._get_driver(episode.group_id)
+            await episode.delete(driver)
+            return {"success": True, "deleted": episode_uuid}
+        except NodeNotFoundError:
+            return {"success": False, "error": f"Episode {episode_uuid} not found"}
+        except Exception as e:
+            logger.exception("Error deleting episode")
+            return {"success": False, "error": str(e)}
+
+    # =========================================================================
+    # Graph Management
+    # =========================================================================
+
+    async def delete_graph(self, group_id: str) -> dict:
+        """Delete an entire graph (group)."""
+        try:
+            driver = self._get_driver(group_id)
+
+            # Delete all nodes (edges are deleted with DETACH DELETE)
+            await driver.execute_query("MATCH (n) DETACH DELETE n")
+
+            return {"success": True, "deleted": group_id}
+        except Exception as e:
+            logger.exception("Error deleting graph")
+            return {"success": False, "error": str(e)}
+
+    async def rename_graph(self, group_id: str, new_name: str) -> dict:
+        """Rename a graph (update all group_id references)."""
+        try:
+            driver = self._get_driver(group_id)
+
+            # Update all nodes
+            await driver.execute_query(
+                "MATCH (n) WHERE n.group_id = $old_id SET n.group_id = $new_id",
+                old_id=group_id,
+                new_id=new_name,
+            )
+
+            # Update all edges
+            await driver.execute_query(
+                "MATCH ()-[r]->() WHERE r.group_id = $old_id SET r.group_id = $new_id",
+                old_id=group_id,
+                new_id=new_name,
+            )
+
+            return {"success": True, "old_name": group_id, "new_name": new_name}
+        except Exception as e:
+            logger.exception("Error renaming graph")
+            return {"success": False, "error": str(e)}
+
+    # =========================================================================
+    # MCP-Related Operations (proxy to MCP server)
+    # =========================================================================
+
+    async def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> dict:
+        """Call an MCP tool via the server (for LLM-based operations)."""
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
-                # MCP uses JSON-RPC 2.0 format
                 payload = {
                     "jsonrpc": "2.0",
                     "id": 1,
@@ -58,7 +592,7 @@ class GraphitiClient:
                 }
 
                 response = await client.post(
-                    f"{self.base_url}/mcp/",
+                    f"{self.settings.graphiti_mcp_url}/mcp/",
                     json=payload,
                     headers={"Content-Type": "application/json"},
                     follow_redirects=True,
@@ -81,23 +615,12 @@ class GraphitiClient:
         entity_types: list[str] | None = None,
         group_ids: list[str] | None = None,
     ) -> dict:
-        """Search for nodes (entities) in the knowledge graph.
-
-        Args:
-            query: Search query
-            limit: Maximum number of results
-            entity_types: Filter by entity types
-            group_ids: Filter by group IDs
-        """
-        arguments = {
-            "query": query,
-            "limit": limit,
-        }
+        """Search for nodes (via MCP for semantic search)."""
+        arguments = {"query": query, "limit": limit}
         if entity_types:
             arguments["entity_types"] = entity_types
         if group_ids:
             arguments["group_ids"] = group_ids
-
         return await self.call_tool("search_nodes", arguments)
 
     async def search_facts(
@@ -106,46 +629,11 @@ class GraphitiClient:
         limit: int = 10,
         group_ids: list[str] | None = None,
     ) -> dict:
-        """Search for facts (relationships) in the knowledge graph.
-
-        Args:
-            query: Search query
-            limit: Maximum number of results
-            group_ids: Filter by group IDs
-        """
-        arguments = {
-            "query": query,
-            "limit": limit,
-        }
+        """Search for facts (via MCP for semantic search)."""
+        arguments = {"query": query, "limit": limit}
         if group_ids:
             arguments["group_ids"] = group_ids
-
         return await self.call_tool("search_facts", arguments)
-
-    async def get_episodes(
-        self,
-        limit: int = 10,
-        group_ids: list[str] | None = None,
-    ) -> dict:
-        """Get recent episodes from the knowledge graph.
-
-        Args:
-            limit: Maximum number of results
-            group_ids: Filter by group IDs
-        """
-        arguments = {"limit": limit}
-        if group_ids:
-            arguments["group_ids"] = group_ids
-
-        return await self.call_tool("get_episodes", arguments)
-
-    async def delete_episode(self, episode_uuid: str) -> dict:
-        """Delete an episode from the knowledge graph.
-
-        Args:
-            episode_uuid: UUID of the episode to delete
-        """
-        return await self.call_tool("delete_episode", {"episode_uuid": episode_uuid})
 
     async def add_episode(
         self,
@@ -155,18 +643,7 @@ class GraphitiClient:
         source_description: str = "",
         group_id: str | None = None,
     ) -> dict:
-        """Add an episode to create nodes/edges with embeddings.
-
-        This is used for manual graph editing - the episode content describes
-        what entity or relationship to create, and Graphiti extracts it.
-
-        Args:
-            name: Name/title of the episode
-            content: Episode body text describing entities/relationships
-            source: Source type (default "text")
-            source_description: Description of where this came from
-            group_id: Graph/group to add to
-        """
+        """Add an episode via MCP (requires LLM processing)."""
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
                 payload = {
@@ -179,209 +656,11 @@ class GraphitiClient:
                     payload["group_id"] = group_id
 
                 response = await client.post(
-                    f"{self.base_url}/episode",
+                    f"{self.settings.graphiti_mcp_url}/episode",
                     json=payload,
                     headers={"Content-Type": "application/json"},
                 )
 
-                if response.status_code == 200:
-                    return response.json()
-                return {"success": False, "error": f"HTTP {response.status_code}"}
-
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    async def delete_entity_node(self, uuid: str, group_id: str | None = None) -> dict:
-        """Delete an entity node from the knowledge graph.
-
-        Args:
-            uuid: UUID of the entity to delete
-            group_id: Graph/group ID (required for FalkorDB)
-        """
-        try:
-            url = f"{self.base_url}/entity/{uuid}"
-            if group_id:
-                url += f"?group_id={group_id}"
-
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.delete(url)
-                if response.status_code == 200:
-                    return response.json()
-                return {"success": False, "error": f"HTTP {response.status_code}"}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    async def delete_entity_edge(self, uuid: str, group_id: str | None = None) -> dict:
-        """Delete an entity edge (relationship) from the knowledge graph.
-
-        Args:
-            uuid: UUID of the edge to delete
-            group_id: Graph/group ID (required for FalkorDB)
-        """
-        try:
-            url = f"{self.base_url}/edge/{uuid}"
-            if group_id:
-                url += f"?group_id={group_id}"
-
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.delete(url)
-                if response.status_code == 200:
-                    return response.json()
-                return {"success": False, "error": f"HTTP {response.status_code}"}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    async def update_entity_node(
-        self,
-        uuid: str,
-        name: str | None = None,
-        summary: str | None = None,
-        group_id: str | None = None,
-        attributes: dict[str, str | None] | None = None,
-    ) -> dict:
-        """Update an entity node in the knowledge graph.
-
-        Args:
-            uuid: UUID of the entity to update
-            name: New name (optional)
-            summary: New summary (optional)
-            group_id: Graph/group ID (required for FalkorDB)
-            attributes: Custom attributes dict (optional)
-        """
-        try:
-            payload = {}
-            if name is not None:
-                payload["name"] = name
-            if summary is not None:
-                payload["summary"] = summary
-            if attributes:
-                payload["attributes"] = attributes
-
-            # Use /graph/node endpoint which supports attributes
-            url = f"{self.base_url}/graph/node/{uuid}"
-            if group_id:
-                url += f"?group_id={group_id}"
-
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.put(
-                    url,
-                    json=payload,
-                    headers={"Content-Type": "application/json"},
-                )
-                if response.status_code == 200:
-                    return response.json()
-                return {"success": False, "error": f"HTTP {response.status_code}"}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    async def update_entity_edge(
-        self, uuid: str, name: str | None = None, fact: str | None = None, group_id: str | None = None
-    ) -> dict:
-        """Update an entity edge in the knowledge graph.
-
-        Args:
-            uuid: UUID of the edge to update
-            name: New name/type (optional)
-            fact: New fact (optional)
-            group_id: Graph/group ID (required for FalkorDB)
-        """
-        try:
-            payload = {}
-            if name is not None:
-                payload["name"] = name
-            if fact is not None:
-                payload["fact"] = fact
-
-            url = f"{self.base_url}/edge/{uuid}"
-            if group_id:
-                url += f"?group_id={group_id}"
-
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.put(
-                    url,
-                    json=payload,
-                    headers={"Content-Type": "application/json"},
-                )
-                if response.status_code == 200:
-                    return response.json()
-                return {"success": False, "error": f"HTTP {response.status_code}"}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    async def create_entity_direct(
-        self,
-        name: str,
-        entity_type: str = "Entity",
-        summary: str = "",
-        group_id: str | None = None,
-        attributes: dict[str, str] | None = None,
-    ) -> dict:
-        """Create an entity node directly without LLM processing.
-
-        Args:
-            name: Entity name
-            entity_type: Type label (e.g., Person, Organization)
-            summary: Entity description
-            group_id: Graph/group to add to
-            attributes: Optional structured attributes
-        """
-        try:
-            payload = {
-                "name": name,
-                "entity_type": entity_type,
-                "summary": summary,
-            }
-            if group_id:
-                payload["group_id"] = group_id
-            if attributes:
-                payload["attributes"] = attributes
-
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(
-                    f"{self.base_url}/entity",
-                    json=payload,
-                    headers={"Content-Type": "application/json"},
-                )
-                if response.status_code == 200:
-                    return response.json()
-                return {"success": False, "error": f"HTTP {response.status_code}"}
-
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    async def create_edge_direct(
-        self,
-        source_uuid: str,
-        target_uuid: str,
-        name: str,
-        fact: str = "",
-        group_id: str | None = None,
-    ) -> dict:
-        """Create an edge directly without LLM processing.
-
-        Args:
-            source_uuid: UUID of source node
-            target_uuid: UUID of target node
-            name: Relationship type (e.g., WORKS_AT)
-            fact: Description of the relationship
-            group_id: Graph/group to add to
-        """
-        try:
-            payload = {
-                "source_uuid": source_uuid,
-                "target_uuid": target_uuid,
-                "name": name,
-                "fact": fact,
-            }
-            if group_id:
-                payload["group_id"] = group_id
-
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(
-                    f"{self.base_url}/edge",
-                    json=payload,
-                    headers={"Content-Type": "application/json"},
-                )
                 if response.status_code == 200:
                     return response.json()
                 return {"success": False, "error": f"HTTP {response.status_code}"}
@@ -390,14 +669,7 @@ class GraphitiClient:
             return {"success": False, "error": str(e)}
 
     async def send_knowledge(self, content: str, group_id: str | None = None) -> dict:
-        """Send knowledge text to LLM for extraction.
-
-        The LLM will analyze the text and extract entities/relationships.
-
-        Args:
-            content: Free-form text for LLM to process
-            group_id: Graph/group to add extracted data to
-        """
+        """Send knowledge text to LLM for extraction."""
         return await self.add_episode(
             name="Knowledge Input",
             content=content,
@@ -407,206 +679,42 @@ class GraphitiClient:
         )
 
     # =========================================================================
-    # Graph Visualization API (for UI)
+    # Queue Status (proxy to MCP server)
     # =========================================================================
 
-    async def get_graph_data(
-        self, limit: int = 500, group_id: str | None = None
-    ) -> dict:
-        """Get graph data for visualization.
-
-        Args:
-            limit: Maximum nodes to return
-            group_id: Optional filter by group_id
-        """
-        try:
-            params = {"limit": limit}
-            if group_id:
-                params["group_id"] = group_id
-
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(
-                    f"{self.base_url}/graph/data",
-                    params=params,
-                )
-                if response.status_code == 200:
-                    return response.json()
-                return {"success": False, "error": f"HTTP {response.status_code}"}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    async def get_group_ids(self) -> dict:
-        """Get all available group IDs."""
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.get(f"{self.base_url}/graph/groups")
-                if response.status_code == 200:
-                    return response.json()
-                return {"success": False, "group_ids": [], "error": f"HTTP {response.status_code}"}
-        except Exception as e:
-            return {"success": False, "group_ids": [], "error": str(e)}
-
-    async def get_node_details(self, uuid: str, group_id: str | None = None) -> dict:
-        """Get detailed information about a specific node.
-
-        Args:
-            uuid: Node UUID
-            group_id: Optional graph to search in
-        """
-        try:
-            params = {}
-            if group_id:
-                params["group_id"] = group_id
-
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.get(
-                    f"{self.base_url}/graph/node/{uuid}",
-                    params=params,
-                )
-                if response.status_code == 200:
-                    return response.json()
-                return {"success": False, "error": f"HTTP {response.status_code}"}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    async def get_edge_details(self, uuid: str, group_id: str | None = None) -> dict:
-        """Get detailed information about a specific edge.
-
-        Args:
-            uuid: Edge UUID
-            group_id: Optional graph to search in
-        """
-        try:
-            params = {}
-            if group_id:
-                params["group_id"] = group_id
-
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.get(
-                    f"{self.base_url}/graph/edge/{uuid}",
-                    params=params,
-                )
-                if response.status_code == 200:
-                    return response.json()
-                return {"success": False, "error": f"HTTP {response.status_code}"}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    async def get_episode_details(self, uuid: str, group_id: str | None = None) -> dict:
-        """Get detailed information about a specific episode.
-
-        Args:
-            uuid: Episode UUID
-            group_id: Optional graph to search in
-        """
-        try:
-            params = {}
-            if group_id:
-                params["group_id"] = group_id
-
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.get(
-                    f"{self.base_url}/graph/episode/{uuid}",
-                    params=params,
-                )
-                if response.status_code == 200:
-                    return response.json()
-                return {"success": False, "error": f"HTTP {response.status_code}"}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    async def delete_graph(self, group_id: str) -> dict:
-        """Delete an entire graph (group).
-
-        WARNING: This permanently deletes all nodes and edges.
-
-        Args:
-            group_id: Graph/group ID to delete
-        """
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.delete(f"{self.base_url}/graph/group/{group_id}")
-                if response.status_code == 200:
-                    return response.json()
-                return {"success": False, "error": f"HTTP {response.status_code}"}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    async def rename_graph(self, group_id: str, new_name: str) -> dict:
-        """Rename a graph (group_id).
-
-        Args:
-            group_id: Current graph/group name
-            new_name: New name for the graph
-        """
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.put(
-                    f"{self.base_url}/graph/group/{group_id}/rename",
-                    json={"new_name": new_name},
-                    headers={"Content-Type": "application/json"},
-                )
-                if response.status_code == 200:
-                    return response.json()
-                return {"success": False, "error": f"HTTP {response.status_code}"}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    async def get_graph_stats(self, group_id: str | None = None) -> dict:
-        """Get graph statistics.
-
-        Args:
-            group_id: Optional filter by group_id
-        """
-        try:
-            params = {}
-            if group_id:
-                params["group_id"] = group_id
-
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.get(
-                    f"{self.base_url}/graph/stats",
-                    params=params,
-                )
-                if response.status_code == 200:
-                    return response.json()
-                return {"success": False, "stats": {}, "error": f"HTTP {response.status_code}"}
-        except Exception as e:
-            return {"success": False, "stats": {}, "error": str(e)}
-
     async def get_queue_status(self) -> dict:
-        """Get queue processing status for UI indicator."""
+        """Get queue processing status."""
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
-                response = await client.get(f"{self.base_url}/queue/status")
+                response = await client.get(f"{self.settings.graphiti_mcp_url}/queue/status")
                 if response.status_code == 200:
                     return response.json()
                 return {"success": False, "processing": False, "error": f"HTTP {response.status_code}"}
         except Exception as e:
             return {"success": False, "processing": False, "error": str(e)}
 
+    # =========================================================================
+    # Query Execution
+    # =========================================================================
+
     async def execute_query(self, query: str, group_id: str | None = None) -> dict:
-        """Execute a read-only Cypher query.
-
-        Args:
-            query: Cypher query string
-            group_id: Graph to execute against
-        """
+        """Execute a read-only Cypher query."""
         try:
-            payload = {"query": query}
-            if group_id:
-                payload["group_id"] = group_id
+            # Basic safety check - only allow read queries
+            query_upper = query.strip().upper()
+            if any(kw in query_upper for kw in ["DELETE", "REMOVE", "SET", "CREATE", "MERGE"]):
+                return {"success": False, "error": "Only read queries are allowed"}
 
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(
-                    f"{self.base_url}/query",
-                    json=payload,
-                    headers={"Content-Type": "application/json"},
-                )
-                if response.status_code == 200:
-                    return response.json()
-                return {"success": False, "error": f"HTTP {response.status_code}"}
+            driver = self._get_driver(group_id)
+            records, header, _ = await driver.execute_query(query)
+
+            return {
+                "success": True,
+                "results": records,
+                "columns": header,
+            }
         except Exception as e:
+            logger.exception("Error executing query")
             return {"success": False, "error": str(e)}
 
 

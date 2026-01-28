@@ -1,18 +1,19 @@
 #!/bin/bash
 # Build Graphiti UI container
+# Note: Build context is the parent directory to include graphiti-milofax
 
 set -e
 
-cd "$(dirname "$0")"
+# Navigate to project directory (parent of graphiti-ui)
+cd "$(dirname "$0")/.."
 
 echo "Building Graphiti UI container..."
-docker build -t graphiti-ui:latest .
+echo "Build context: $(pwd)"
+docker build -t graphiti-ui:latest -f graphiti-ui/Dockerfile .
 
 echo ""
 echo "Done."
 echo ""
-echo "For local development:"
-echo "  docker compose -f docker-compose.example.yml up -d"
-echo ""
 echo "For production (from /v/graphiti/):"
-echo "  docker compose up -d"
+echo "  stack rebuild"
+echo ""

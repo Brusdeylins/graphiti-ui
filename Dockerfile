@@ -1,5 +1,6 @@
 # ============================================
 # Graphiti UI - Dockerfile
+# Build context: ./project (parent directory)
 # ============================================
 
 # Stage 1: Build React Frontend
@@ -7,14 +8,14 @@ FROM node:20-slim AS frontend-builder
 
 WORKDIR /app/frontend
 
-# Copy frontend package files
-COPY frontend/package*.json ./
+# Copy frontend package files (relative to ./project context)
+COPY graphiti-ui/frontend/package*.json ./
 
 # Install dependencies
 RUN npm ci
 
 # Copy frontend source
-COPY frontend/ ./
+COPY graphiti-ui/frontend/ ./
 
 # Build frontend
 RUN npm run build
@@ -29,6 +30,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
     gnupg \
+    git \
     && install -m 0755 -d /etc/apt/keyrings \
     && curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
     && chmod a+r /etc/apt/keyrings/docker.gpg \
@@ -40,12 +42,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install uv for fast package management
 RUN pip install --no-cache-dir uv
 
-# Copy project files
-COPY pyproject.toml README.md ./
-COPY src/ ./src/
+# Copy graphiti-milofax (local fork) for graphiti_core
+COPY graphiti-milofax /app/graphiti-milofax
 
-# Install dependencies
-RUN uv pip install --system --no-cache .
+# Copy project files
+COPY graphiti-ui/pyproject.toml graphiti-ui/README.md ./
+COPY graphiti-ui/src/ ./src/
+
+# Install dependencies (graphiti-core from local path, then UI)
+RUN uv pip install --system --no-cache /app/graphiti-milofax[falkordb] && \
+    uv pip install --system --no-cache .
 
 # Copy built frontend from builder stage
 COPY --from=frontend-builder /app/frontend/dist /app/frontend/dist

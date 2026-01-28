@@ -17,7 +17,11 @@ dependencies = [
     "redis>=5.0.0",
     "python-multipart>=0.0.9",
     "falkordb>=1.0.0",
+    "graphiti-core[falkordb]",
 ]
+
+[tool.uv.sources]
+graphiti-core = { path = "../graphiti-milofax", editable = true }
 
 [project.optional-dependencies]
 dev = [
