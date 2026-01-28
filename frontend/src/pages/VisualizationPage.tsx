@@ -585,6 +585,35 @@ export function VisualizationPage() {
     });
   }, []);
 
+  // Get attributes ordered by entity type field order
+  const getOrderedAttributes = useCallback((node: Node): [string, any][] => {
+    if (!node.attributes || Object.keys(node.attributes).length === 0) {
+      return [];
+    }
+
+    // Find entity type for this node
+    const nodeEntityType = node.labels?.[0] || node.type;
+    const entityType = entityTypes.find(et => et.name === nodeEntityType);
+
+    // Get field order from entity type
+    const fieldOrder = entityType?.fields?.map(f => f.name) || [];
+
+    // Sort attributes: entity type fields first (in order), then remaining alphabetically
+    const entries = Object.entries(node.attributes);
+    return entries.sort(([a], [b]) => {
+      const aIndex = fieldOrder.indexOf(a);
+      const bIndex = fieldOrder.indexOf(b);
+      // Both in field order: sort by order
+      if (aIndex !== -1 && bIndex !== -1) return aIndex - bIndex;
+      // Only a in field order: a first
+      if (aIndex !== -1) return -1;
+      // Only b in field order: b first
+      if (bIndex !== -1) return 1;
+      // Neither: alphabetical
+      return a.localeCompare(b);
+    });
+  }, [entityTypes]);
+
   // Load episode content on demand (with UI toggle)
   const loadEpisode = useCallback(async (episodeUuid: string) => {
     // Already loaded - just toggle
@@ -793,14 +822,6 @@ export function VisualizationPage() {
     setEditNodeName(selectedNode.name || '');
     setEditNodeSummary(selectedNode.summary || '');
 
-    // Load existing attributes, converting all values to strings
-    const attrs: Record<string, string> = {};
-    if (selectedNode.attributes) {
-      Object.entries(selectedNode.attributes).forEach(([key, value]) => {
-        attrs[key] = value != null ? String(value) : '';
-      });
-    }
-
     // Fetch entity types from DB if not loaded yet
     let currentEntityTypes = entityTypes;
     if (currentEntityTypes.length === 0) {
@@ -814,19 +835,28 @@ export function VisualizationPage() {
       }
     }
 
-    // Add entity type fields (if defined) with empty values for missing fields
-    // Entity type is in labels array (e.g., ["Person"]), not in type field (which is "Entity")
+    // Find entity type for field order
     const nodeEntityType = selectedNode.labels?.[0] || selectedNode.type;
-    if (nodeEntityType) {
-      const entityType = currentEntityTypes.find(et => et.name === nodeEntityType);
-      if (entityType?.fields) {
-        entityType.fields.forEach(field => {
-          if (!(field.name in attrs)) {
-            attrs[field.name] = '';
-          }
-        });
-      }
-    }
+    const entityType = currentEntityTypes.find(et => et.name === nodeEntityType);
+    const fieldOrder = entityType?.fields?.map(f => f.name) || [];
+
+    // Build attrs in entity type field order (JS objects preserve insertion order)
+    const attrs: Record<string, string> = {};
+    const existingAttrs = selectedNode.attributes || {};
+
+    // First: add fields in entity type order
+    fieldOrder.forEach(fieldName => {
+      const value = existingAttrs[fieldName];
+      attrs[fieldName] = value != null ? String(value) : '';
+    });
+
+    // Second: add remaining existing attributes (not in entity type) alphabetically
+    Object.keys(existingAttrs)
+      .filter(key => !fieldOrder.includes(key))
+      .sort()
+      .forEach(key => {
+        attrs[key] = existingAttrs[key] != null ? String(existingAttrs[key]) : '';
+      });
 
     setEditNodeAttributes(attrs);
     setIsEditingNode(true);
@@ -1677,7 +1707,7 @@ export function VisualizationPage() {
                   <label className="form-label text-muted small mb-1">Attributes</label>
                   <table className="table table-sm table-borderless mb-0">
                     <tbody>
-                      {Object.entries(selectedNode.attributes).map(([key, value]) => {
+                      {getOrderedAttributes(selectedNode).map(([key, value]) => {
                         const strValue = typeof value === 'object' ? JSON.stringify(value) : String(value);
                         const isUrl = typeof value === 'string' && (value.startsWith('http://') || value.startsWith('https://'));
                         return (
