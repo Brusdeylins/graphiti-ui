@@ -807,9 +807,10 @@ export function VisualizationPage() {
     }
 
     // Add entity type fields (if defined) with empty values for missing fields
-    const nodeType = selectedNode.type;
-    if (nodeType) {
-      const entityType = currentEntityTypes.find(et => et.name === nodeType);
+    // Entity type is in labels array (e.g., ["Person"]), not in type field (which is "Entity")
+    const nodeEntityType = selectedNode.labels?.[0] || selectedNode.type;
+    if (nodeEntityType) {
+      const entityType = currentEntityTypes.find(et => et.name === nodeEntityType);
       if (entityType?.fields) {
         entityType.fields.forEach(field => {
           if (!(field.name in attrs)) {
