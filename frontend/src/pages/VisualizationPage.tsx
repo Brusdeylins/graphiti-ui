@@ -260,6 +260,7 @@ export function VisualizationPage() {
   // Edit form state
   const [editNodeName, setEditNodeName] = useState('');
   const [editNodeSummary, setEditNodeSummary] = useState('');
+  const [editNodeType, setEditNodeType] = useState('');
   const [editNodeAttributes, setEditNodeAttributes] = useState<Record<string, string>>({});
   const [editEdgeName, setEditEdgeName] = useState('');
   const [editEdgeFact, setEditEdgeFact] = useState('');
@@ -278,10 +279,17 @@ export function VisualizationPage() {
   const [showRenameGraphModal, setShowRenameGraphModal] = useState(false);
   const [renameGraphNewName, setRenameGraphNewName] = useState('');
 
+  // Helper to get actual entity type (labels[0] or fallback to type)
+  const getEntityType = useCallback((node: Node | null | undefined): string => {
+    if (!node) return '';
+    return node.labels?.[0] || node.type || '';
+  }, []);
+
   // Extract unique types from visible nodes and build color map (memoized)
+  // Use labels[0] as the actual entity type, fallback to type
   const nodeTypes = useMemo(() =>
     graphData
-      ? [...new Set(graphData.nodes.map(n => n.type))].filter(Boolean).sort()
+      ? [...new Set(graphData.nodes.map(n => n.labels?.[0] || n.type))].filter(Boolean).sort()
       : [],
     [graphData]
   );
@@ -655,11 +663,6 @@ export function VisualizationPage() {
   // Graph Editor Handlers
   // ============================================
 
-  const refreshGraph = useCallback(() => {
-    // Trigger data reload by incrementing refresh key
-    setRefreshKey(prev => prev + 1);
-  }, []);
-
   const openCreateNodeModal = async () => {
     // Reset form state
     setNewNodeName('');
@@ -716,23 +719,39 @@ export function VisualizationPage() {
         }
       });
 
+      const entityType = newNodeType.trim() || 'Entity';
       const response = await api.post('/graph/node/direct', {
         name: newNodeName.trim(),
-        entity_type: newNodeType.trim() || 'Entity',
+        entity_type: entityType,
         summary: newNodeSummary.trim(),
         group_id: selectedGroup,
         attributes: Object.keys(filteredAttrs).length > 0 ? filteredAttrs : undefined,
       });
 
       if (response.data.success) {
+        // Add node locally instead of full refresh
+        const newNode: Node = {
+          id: response.data.uuid,
+          name: newNodeName.trim(),
+          type: entityType,
+          labels: entityType !== 'Entity' ? [entityType] : [],
+          summary: newNodeSummary.trim(),
+          group_id: selectedGroup,
+          created_at: new Date().toISOString(),
+          attributes: Object.keys(filteredAttrs).length > 0 ? filteredAttrs : {},
+        };
+        setGraphData(prev => prev ? {
+          ...prev,
+          nodes: [...prev.nodes, newNode],
+        } : prev);
+
         setShowCreateNodeModal(false);
         setNewNodeName('');
         setNewNodeType('');
         setNewNodeSummary('');
         setSelectedEntityType(null);
         setNodeAttributes({});
-        ensureGroupInList(); // Add new graph to dropdown
-        refreshGraph();
+        ensureGroupInList();
       } else {
         setAlertMessage({ type: 'error', title: 'Create Failed', message: response.data.error });
       }
@@ -754,24 +773,38 @@ export function VisualizationPage() {
       return;
     }
 
+    const relationshipType = newEdgeType.trim().toUpperCase().replace(/\s+/g, '_');
     setIsSaving(true);
     try {
       const response = await api.post('/graph/edge/direct', {
         source_uuid: edgeSourceNode!.id,
         target_uuid: edgeTargetNode!.id,
-        relationship_type: newEdgeType.trim().toUpperCase().replace(/\s+/g, '_'),
+        relationship_type: relationshipType,
         fact: newEdgeFact.trim(),
         group_id: selectedGroup,
       });
 
       if (response.data.success) {
+        // Add edge locally instead of full refresh
+        const newEdge: Edge = {
+          uuid: response.data.uuid,
+          source: edgeSourceNode!.id,
+          target: edgeTargetNode!.id,
+          type: relationshipType,
+          fact: newEdgeFact.trim() || `${relationshipType} relationship`,
+          created_at: new Date().toISOString(),
+        };
+        setGraphData(prev => prev ? {
+          ...prev,
+          edges: [...prev.edges, newEdge],
+        } : prev);
+
         setShowCreateEdgeModal(false);
         setEdgeSourceNode(null);
         setEdgeTargetNode(null);
         setNewEdgeType('');
         setNewEdgeFact('');
-        ensureGroupInList(); // Add new graph to dropdown
-        refreshGraph();
+        ensureGroupInList();
       } else {
         setAlertMessage({ type: 'error', title: 'Create Failed', message: response.data.error });
       }
@@ -821,6 +854,7 @@ export function VisualizationPage() {
     if (!selectedNode) return;
     setEditNodeName(selectedNode.name || '');
     setEditNodeSummary(selectedNode.summary || '');
+    setEditNodeType(selectedNode.labels?.[0] || selectedNode.type || 'Entity');
 
     // Fetch entity types from DB if not loaded yet
     let currentEntityTypes = entityTypes;
@@ -866,6 +900,7 @@ export function VisualizationPage() {
     setIsEditingNode(false);
     setEditNodeName('');
     setEditNodeSummary('');
+    setEditNodeType('');
     setEditNodeAttributes({});
   };
 
@@ -883,6 +918,11 @@ export function VisualizationPage() {
 
       const normalizedName = editNodeName.trim() || null;
       const normalizedSummary = editNodeSummary.trim() || null;
+      const normalizedType = editNodeType.trim() || null;
+
+      // Check if entity type changed
+      const currentType = selectedNode.labels?.[0] || selectedNode.type;
+      const typeChanged = normalizedType && normalizedType !== currentType;
 
       // Use node's actual group_id (required for FalkorDB - each group is a separate graph)
       const nodeGroupId = selectedNode.group_id || selectedGroup;
@@ -892,15 +932,19 @@ export function VisualizationPage() {
       const response = await api.put(url, {
         name: normalizedName,
         summary: normalizedSummary,
+        entity_type: typeChanged ? normalizedType : undefined,
         attributes: Object.keys(processedAttributes).length > 0 ? processedAttributes : undefined,
       });
 
       if (response.data.success) {
         setIsEditingNode(false);
         setEditNodeAttributes({});
+        setEditNodeType('');
 
         const updatedName = normalizedName || selectedNode.name;
         const updatedSummary = normalizedSummary || selectedNode.summary;
+        const updatedType = typeChanged ? normalizedType : currentType;
+        const updatedLabels = typeChanged ? [normalizedType!] : selectedNode.labels;
 
         // Filter out null values for display (they were deleted from DB)
         const displayAttributes: Record<string, string> = {};
@@ -915,6 +959,8 @@ export function VisualizationPage() {
           ...selectedNode,
           name: updatedName,
           summary: updatedSummary,
+          type: updatedType,
+          labels: updatedLabels,
           attributes: displayAttributes,
         });
 
@@ -924,7 +970,7 @@ export function VisualizationPage() {
             ...graphData,
             nodes: graphData.nodes.map(n =>
               n.id === selectedNode.id
-                ? { ...n, name: updatedName, summary: updatedSummary, attributes: displayAttributes }
+                ? { ...n, name: updatedName, summary: updatedSummary, type: updatedType, labels: updatedLabels, attributes: displayAttributes }
                 : n
             ),
           });
@@ -957,9 +1003,19 @@ export function VisualizationPage() {
       const response = await api.delete(url);
 
       if (response.data.success) {
+        const deletedNodeId = selectedNode.id;
         setShowDeleteNodeConfirm(false);
         clearSelection();
-        refreshGraph();
+        // Remove node and connected edges locally instead of full refresh
+        setGraphData(prev => prev ? {
+          ...prev,
+          nodes: prev.nodes.filter(n => n.id !== deletedNodeId),
+          edges: prev.edges.filter(e => {
+            const sourceId = typeof e.source === 'string' ? e.source : e.source?.id;
+            const targetId = typeof e.target === 'string' ? e.target : e.target?.id;
+            return sourceId !== deletedNodeId && targetId !== deletedNodeId;
+          }),
+        } : prev);
       } else {
         setAlertMessage({ type: 'error', title: 'Delete Failed', message: response.data.error });
       }
@@ -1063,9 +1119,14 @@ export function VisualizationPage() {
       const response = await api.delete(url);
 
       if (response.data.success) {
+        const deletedEdgeUuid = selectedEdge.uuid;
         setShowDeleteEdgeConfirm(false);
         clearSelection();
-        refreshGraph();
+        // Remove edge locally instead of full refresh
+        setGraphData(prev => prev ? {
+          ...prev,
+          edges: prev.edges.filter(e => e.uuid !== deletedEdgeUuid),
+        } : prev);
       } else {
         setAlertMessage({ type: 'error', title: 'Delete Failed', message: response.data.error });
       }
@@ -1114,10 +1175,7 @@ export function VisualizationPage() {
         const response = await api.get('/graph/groups');
         if (response.data.success && response.data.group_ids?.length > 0) {
           setGroups(response.data.group_ids);
-          // Set first group as default if none selected
-          if (!selectedGroup) {
-            setSelectedGroup(response.data.group_ids[0]);
-          }
+          // Keep "All Graphs" (empty string) as default - don't auto-select
         }
       } catch (err) {
         console.error('Failed to fetch groups:', err);
@@ -1128,11 +1186,7 @@ export function VisualizationPage() {
 
   useEffect(() => {
     const fetchData = async () => {
-      // Wait for selectedGroup to be set (either from fetch or user selection)
-      if (!selectedGroup && groups.length === 0) {
-        // Still loading groups, wait
-        return;
-      }
+      // Fetch data immediately - empty selectedGroup means "All Graphs"
 
       setIsLoading(true);
       setError(null);
@@ -1585,6 +1639,42 @@ export function VisualizationPage() {
                     />
                   </div>
                   <div className="mb-3">
+                    <label className="form-label">Type</label>
+                    <select
+                      className="form-select"
+                      value={editNodeType}
+                      onChange={e => {
+                        const newType = e.target.value;
+                        setEditNodeType(newType);
+                        // Update attributes based on new entity type's fields
+                        const entityType = entityTypes.find(et => et.name === newType);
+                        if (entityType?.fields) {
+                          const newAttrs: Record<string, string> = {};
+                          // Add fields from new entity type (preserve existing values if field name matches)
+                          entityType.fields.forEach(f => {
+                            newAttrs[f.name] = editNodeAttributes[f.name] || '';
+                          });
+                          // Keep existing attributes not in new type (at the end)
+                          Object.entries(editNodeAttributes).forEach(([key, value]) => {
+                            if (!(key in newAttrs)) {
+                              newAttrs[key] = value;
+                            }
+                          });
+                          setEditNodeAttributes(newAttrs);
+                        }
+                      }}
+                    >
+                      {/* Always include Entity as first option */}
+                      <option value="Entity">Entity</option>
+                      {entityTypes
+                        .filter(et => et.name !== 'Entity')
+                        .map(et => (
+                          <option key={et.name} value={et.name}>{et.name}</option>
+                        ))
+                      }
+                    </select>
+                  </div>
+                  <div className="mb-3">
                     <label className="form-label">Summary</label>
                     <textarea
                       className="form-control"
@@ -1656,11 +1746,11 @@ export function VisualizationPage() {
                   <div className="mb-3 d-flex flex-wrap gap-1">
                     <span
                       className="badge"
-                      style={{ backgroundColor: getTypeColor(selectedNode.type), color: 'white' }}
+                      style={{ backgroundColor: getTypeColor(getEntityType(selectedNode)), color: 'white' }}
                     >
-                      {selectedNode.type}
+                      {getEntityType(selectedNode)}
                     </span>
-                    {selectedNode.labels?.filter(l => l !== 'Entity' && l !== selectedNode.type).map(label => (
+                    {selectedNode.labels?.filter(l => l !== 'Entity' && l !== getEntityType(selectedNode)).map(label => (
                       <span key={label} className="badge bg-secondary text-white">{label}</span>
                     ))}
                   </div>
@@ -1756,7 +1846,7 @@ export function VisualizationPage() {
                               <span className="text-muted">→</span>
                               <span
                                 className="badge text-white text-truncate"
-                                style={{ backgroundColor: getTypeColor(otherNode.type), maxWidth: '150px', fontSize: '0.7rem' }}
+                                style={{ backgroundColor: getTypeColor(getEntityType(otherNode)), maxWidth: '150px', fontSize: '0.7rem' }}
                                 title={otherNode.name}
                               >
                                 {otherNode.name}
@@ -1766,7 +1856,7 @@ export function VisualizationPage() {
                             <>
                               <span
                                 className="badge text-white text-truncate"
-                                style={{ backgroundColor: getTypeColor(otherNode.type), maxWidth: '150px', fontSize: '0.7rem' }}
+                                style={{ backgroundColor: getTypeColor(getEntityType(otherNode)), maxWidth: '150px', fontSize: '0.7rem' }}
                                 title={otherNode.name}
                               >
                                 {otherNode.name}
@@ -1855,7 +1945,7 @@ export function VisualizationPage() {
                   <div className="d-flex flex-wrap align-items-center justify-content-center gap-2 mb-3">
                     <span
                       className="badge text-white"
-                      style={{ backgroundColor: getTypeColor(sourceNode?.type || ''), flex: '1 1 auto', textAlign: 'center', minWidth: '80px', cursor: sourceNode ? 'pointer' : 'default' }}
+                      style={{ backgroundColor: getTypeColor(getEntityType(sourceNode)), flex: '1 1 auto', textAlign: 'center', minWidth: '80px', cursor: sourceNode ? 'pointer' : 'default' }}
                       onClick={() => sourceNode && navigateToNode(sourceNode)}
                       title="Click to view node"
                     >
@@ -1866,7 +1956,7 @@ export function VisualizationPage() {
                     <span className="text-muted flex-shrink-0">→</span>
                     <span
                       className="badge text-white"
-                      style={{ backgroundColor: getTypeColor(targetNode?.type || ''), flex: '1 1 auto', textAlign: 'center', minWidth: '80px', cursor: targetNode ? 'pointer' : 'default' }}
+                      style={{ backgroundColor: getTypeColor(getEntityType(targetNode)), flex: '1 1 auto', textAlign: 'center', minWidth: '80px', cursor: targetNode ? 'pointer' : 'default' }}
                       onClick={() => targetNode && navigateToNode(targetNode)}
                       title="Click to view node"
                     >
@@ -2191,14 +2281,14 @@ export function VisualizationPage() {
                 <div className="d-flex align-items-center justify-content-center gap-2 mb-4 p-3 rounded" style={{ background: 'var(--tblr-bg-surface-secondary)' }}>
                   <span
                     className="badge text-white"
-                    style={{ backgroundColor: edgeSourceNode ? getTypeColor(edgeSourceNode.type) : '#667382' }}
+                    style={{ backgroundColor: edgeSourceNode ? getTypeColor(getEntityType(edgeSourceNode)) : '#667382' }}
                   >
                     {edgeSourceNode?.name || 'Select source...'}
                   </span>
                   <span className="text-muted">→</span>
                   <span
                     className="badge text-white"
-                    style={{ backgroundColor: edgeTargetNode ? getTypeColor(edgeTargetNode.type) : '#667382' }}
+                    style={{ backgroundColor: edgeTargetNode ? getTypeColor(getEntityType(edgeTargetNode)) : '#667382' }}
                   >
                     {edgeTargetNode?.name || 'Select target...'}
                   </span>

@@ -86,86 +86,145 @@ class GraphitiClient:
     # =========================================================================
 
     async def get_graph_data(self, limit: int = 500, group_id: str | None = None) -> dict:
-        """Get graph data for visualization."""
+        """Get graph data for visualization.
+
+        If group_id is None, queries ALL available graphs and merges results.
+        """
         try:
-            driver = self._get_driver(group_id)
+            # If no group_id, query all graphs
+            if group_id is None:
+                return await self._get_all_graphs_data(limit)
 
-            # Query nodes - return full node to get all properties including attributes
-            nodes_query = """
-            MATCH (n:Entity)
-            RETURN n, labels(n) AS labels
-            LIMIT $limit
-            """
-            nodes_result, _, _ = await driver.execute_query(nodes_query, limit=limit)
-
-            # Query edges - return full relationship to get all properties including episodes
-            edges_query = """
-            MATCH (a:Entity)-[r:RELATES_TO]->(b:Entity)
-            RETURN a.uuid AS source, b.uuid AS target, r
-            LIMIT $limit
-            """
-            edges_result, _, _ = await driver.execute_query(edges_query, limit=limit)
-
-            # Transform nodes - extract all properties from node object
-            nodes = []
-            for record in nodes_result:
-                node_obj = record.get("n")
-                labels = record.get("labels", [])
-                if "Entity" in labels:
-                    labels = [l for l in labels if l != "Entity"]
-
-                # Get node properties (FalkorDB Node object has .properties dict)
-                props = node_obj.properties if hasattr(node_obj, "properties") else (node_obj or {})
-
-                # Extract attributes (all properties except standard ones)
-                standard_props = {"uuid", "name", "summary", "group_id", "created_at",
-                                  "name_embedding", "summary_embedding", "labels"}
-                attributes = {
-                    k: v for k, v in props.items()
-                    if k not in standard_props and not k.endswith("_embedding")
-                }
-
-                nodes.append({
-                    "uuid": props.get("uuid"),
-                    "name": props.get("name"),
-                    "summary": props.get("summary", ""),
-                    "group_id": props.get("group_id", ""),
-                    "created_at": props.get("created_at"),
-                    "labels": labels,
-                    "entity_type": labels[0] if labels else "Entity",
-                    "attributes": attributes,
-                })
-
-            # Transform edges - extract all properties from relationship object
-            edges = []
-            for record in edges_result:
-                rel_obj = record.get("r")
-                # Get relationship properties (FalkorDB Edge object has .properties dict)
-                props = rel_obj.properties if hasattr(rel_obj, "properties") else (rel_obj or {})
-
-                edges.append({
-                    "uuid": props.get("uuid", ""),
-                    "source": record["source"],
-                    "target": record["target"],
-                    "name": props.get("name", ""),
-                    "fact": props.get("fact", ""),
-                    "group_id": props.get("group_id", ""),
-                    "created_at": props.get("created_at", ""),
-                    "valid_at": props.get("valid_at"),
-                    "expired_at": props.get("expired_at"),
-                    "episodes": props.get("episodes", []),
-                })
-
-            return {"success": True, "nodes": nodes, "edges": edges}
+            # Single graph query
+            return await self._get_single_graph_data(group_id, limit)
         except Exception as e:
             logger.exception("Error getting graph data")
             return {"success": False, "nodes": [], "edges": [], "error": str(e)}
+
+    async def _get_single_graph_data(self, group_id: str, limit: int) -> dict:
+        """Get data from a single graph."""
+        driver = self._get_driver(group_id)
+
+        # Query nodes
+        nodes_query = """
+        MATCH (n:Entity)
+        RETURN n, labels(n) AS labels
+        LIMIT $limit
+        """
+        nodes_result, _, _ = await driver.execute_query(nodes_query, limit=limit)
+
+        # Query edges
+        edges_query = """
+        MATCH (a:Entity)-[r:RELATES_TO]->(b:Entity)
+        RETURN a.uuid AS source, b.uuid AS target, r
+        LIMIT $limit
+        """
+        edges_result, _, _ = await driver.execute_query(edges_query, limit=limit)
+
+        nodes = self._transform_nodes(nodes_result, group_id)
+        edges = self._transform_edges(edges_result, group_id)
+
+        return {"success": True, "nodes": nodes, "edges": edges}
+
+    async def _get_all_graphs_data(self, limit: int) -> dict:
+        """Get data from all available graphs and merge results."""
+        groups_response = await self.get_group_ids()
+        if not groups_response.get("success"):
+            return {"success": False, "nodes": [], "edges": [], "error": "Failed to get groups"}
+
+        all_nodes = []
+        all_edges = []
+        seen_node_ids: set[str] = set()
+        seen_edge_ids: set[str] = set()
+
+        # Use full limit per graph (not divided) to ensure all edges are fetched
+        group_ids = groups_response.get("group_ids", [])
+        if not group_ids:
+            return {"success": True, "nodes": [], "edges": []}
+
+        per_graph_limit = limit  # Don't divide - fetch full limit from each graph
+
+        for gid in group_ids:
+            try:
+                result = await self._get_single_graph_data(gid, per_graph_limit)
+                if result.get("success"):
+                    for node in result.get("nodes", []):
+                        if node["id"] not in seen_node_ids:
+                            seen_node_ids.add(node["id"])
+                            all_nodes.append(node)
+                    for edge in result.get("edges", []):
+                        if edge["uuid"] not in seen_edge_ids:
+                            seen_edge_ids.add(edge["uuid"])
+                            all_edges.append(edge)
+            except Exception as e:
+                logger.warning(f"Failed to query graph {gid}: {e}")
+
+        return {"success": True, "nodes": all_nodes, "edges": all_edges}
+
+    def _transform_nodes(self, nodes_result: list, group_id: str) -> list:
+        """Transform node query results."""
+        nodes = []
+        for record in nodes_result:
+            node_obj = record.get("n")
+            labels = record.get("labels", [])
+            if "Entity" in labels:
+                labels = [l for l in labels if l != "Entity"]
+
+            props = node_obj.properties if hasattr(node_obj, "properties") else (node_obj or {})
+
+            standard_props = {"uuid", "name", "summary", "group_id", "created_at",
+                              "name_embedding", "summary_embedding", "labels"}
+            attributes = {
+                k: v for k, v in props.items()
+                if k not in standard_props and not k.endswith("_embedding")
+            }
+
+            nodes.append({
+                "id": props.get("uuid"),
+                "uuid": props.get("uuid"),
+                "name": props.get("name"),
+                "summary": props.get("summary", ""),
+                "group_id": props.get("group_id", group_id),
+                "created_at": props.get("created_at"),
+                "labels": labels,
+                "type": labels[0] if labels else "Entity",
+                "attributes": attributes,
+            })
+        return nodes
+
+    def _transform_edges(self, edges_result: list, group_id: str) -> list:
+        """Transform edge query results."""
+        edges = []
+        for record in edges_result:
+            rel_obj = record.get("r")
+            props = rel_obj.properties if hasattr(rel_obj, "properties") else (rel_obj or {})
+
+            edges.append({
+                "uuid": props.get("uuid", ""),
+                "source": record["source"],
+                "target": record["target"],
+                "name": props.get("name", ""),
+                "fact": props.get("fact", ""),
+                "group_id": props.get("group_id", group_id),
+                "created_at": props.get("created_at", ""),
+                "valid_at": props.get("valid_at"),
+                "expired_at": props.get("expired_at"),
+                "episodes": props.get("episodes", []),
+            })
+        return edges
 
     async def get_group_ids(self) -> dict:
         """Get all available group IDs from FalkorDB.
 
         FalkorDB stores each group as a separate graph (Redis key with type 'graphdata').
         """
+        # Only exclude the FalkorDB database name itself (configured in config.yaml)
+        # All other graphs are user-created groups that should be visible
+        EXCLUDED_GRAPHS = {
+            "graphiti",  # Database name from config, not a real group
+            "default_db",  # FalkorDB default database name
+        }
+
         try:
             import redis.asyncio as redis_async
 
@@ -182,6 +241,10 @@ class GraphitiClient:
             for key in keys:
                 # Skip internal/system keys
                 if key.startswith("_") or key.startswith("graphiti:") or key.startswith("telemetry{"):
+                    continue
+
+                # Skip known system/test graphs
+                if key.lower() in EXCLUDED_GRAPHS:
                     continue
 
                 # Check if it's a FalkorDB graph
@@ -302,6 +365,7 @@ class GraphitiClient:
         uuid: str,
         name: str | None = None,
         summary: str | None = None,
+        entity_type: str | None = None,
         group_id: str | None = None,
         attributes: dict[str, str | None] | None = None,
     ) -> dict:
@@ -330,6 +394,18 @@ class GraphitiClient:
 
             # Save changes
             await entity.save(driver)
+
+            # Change entity type (labels) if specified
+            if entity_type is not None:
+                # Sanitize label name (FalkorDB doesn't support parameterized labels)
+                safe_type = entity_type.replace("'", "").replace('"', "").replace("\\", "")
+                # Add the new label (node keeps Entity label as base)
+                add_label_query = f"""
+                MATCH (n:Entity {{uuid: $uuid}})
+                SET n:`{safe_type}`
+                RETURN n.uuid
+                """
+                await driver.execute_query(add_label_query, uuid=uuid)
 
             return {"success": True, "uuid": uuid}
         except NodeNotFoundError:
@@ -554,10 +630,18 @@ class GraphitiClient:
     async def delete_graph(self, group_id: str) -> dict:
         """Delete an entire graph (group)."""
         try:
-            driver = self._get_driver(group_id)
+            import redis.asyncio as redis_async
 
-            # Delete all nodes (edges are deleted with DETACH DELETE)
-            await driver.execute_query("MATCH (n) DETACH DELETE n")
+            # Use GRAPH.DELETE command to properly delete FalkorDB graph
+            # (simple DEL doesn't work for graphdata type keys)
+            r = redis_async.Redis(
+                host=self.settings.falkordb_host,
+                port=self.settings.falkordb_port,
+                password=self.settings.falkordb_password or None,
+                decode_responses=True,
+            )
+            await r.execute_command("GRAPH.DELETE", group_id)
+            await r.aclose()
 
             return {"success": True, "deleted": group_id}
         except Exception as e:
@@ -565,23 +649,41 @@ class GraphitiClient:
             return {"success": False, "error": str(e)}
 
     async def rename_graph(self, group_id: str, new_name: str) -> dict:
-        """Rename a graph (update all group_id references)."""
+        """Rename a graph by copying to new name and deleting the old one.
+
+        FalkorDB stores each graph as a separate Redis key, so renaming requires:
+        1. Copy graph to new name (GRAPH.COPY)
+        2. Update group_id property on all nodes/edges in the new graph
+        3. Delete the old graph
+        """
         try:
-            driver = self._get_driver(group_id)
+            import redis.asyncio as redis_async
 
-            # Update all nodes
-            await driver.execute_query(
-                "MATCH (n) WHERE n.group_id = $old_id SET n.group_id = $new_id",
-                old_id=group_id,
+            r = redis_async.Redis(
+                host=self.settings.falkordb_host,
+                port=self.settings.falkordb_port,
+                password=self.settings.falkordb_password or None,
+                decode_responses=True,
+            )
+
+            # Step 1: Copy graph to new name
+            await r.execute_command("GRAPH.COPY", group_id, new_name)
+
+            # Step 2: Update group_id property on all nodes/edges in the NEW graph
+            new_driver = self._get_driver(new_name)
+            await new_driver.execute_query(
+                "MATCH (n) SET n.group_id = $new_id",
+                new_id=new_name,
+            )
+            await new_driver.execute_query(
+                "MATCH ()-[r]->() SET r.group_id = $new_id",
                 new_id=new_name,
             )
 
-            # Update all edges
-            await driver.execute_query(
-                "MATCH ()-[r]->() WHERE r.group_id = $old_id SET r.group_id = $new_id",
-                old_id=group_id,
-                new_id=new_name,
-            )
+            # Step 3: Delete the old graph
+            await r.execute_command("GRAPH.DELETE", group_id)
+
+            await r.aclose()
 
             return {"success": True, "old_name": group_id, "new_name": new_name}
         except Exception as e:
@@ -594,27 +696,64 @@ class GraphitiClient:
 
     async def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> dict:
         """Call an MCP tool via the server (for LLM-based operations)."""
+        import json as json_module
+
+        mcp_headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        }
+        mcp_url = f"{self.settings.graphiti_mcp_url}/mcp"
+
+        def parse_sse_response(text: str) -> dict | None:
+            """Parse SSE response to extract JSON data."""
+            for line in text.split("\n"):
+                if line.startswith("data: "):
+                    return json_module.loads(line[6:])
+            return None
+
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                payload = {
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                # Step 1: Initialize MCP session
+                init_payload = {
                     "jsonrpc": "2.0",
                     "id": 1,
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": "2024-11-05",
+                        "capabilities": {},
+                        "clientInfo": {"name": "graphiti-ui", "version": "1.0"},
+                    },
+                }
+                init_response = await client.post(
+                    mcp_url, json=init_payload, headers=mcp_headers
+                )
+                if init_response.status_code != 200:
+                    return {"success": False, "error": f"MCP init failed: HTTP {init_response.status_code}"}
+
+                session_id = init_response.headers.get("mcp-session-id")
+                if not session_id:
+                    return {"success": False, "error": "MCP server did not return session ID"}
+
+                # Step 2: Call the tool with session ID
+                tool_payload = {
+                    "jsonrpc": "2.0",
+                    "id": 2,
                     "method": "tools/call",
                     "params": {
                         "name": tool_name,
                         "arguments": arguments,
                     },
                 }
-
+                tool_headers = {**mcp_headers, "mcp-session-id": session_id}
                 response = await client.post(
-                    f"{self.settings.graphiti_mcp_url}/mcp/",
-                    json=payload,
-                    headers={"Content-Type": "application/json"},
-                    follow_redirects=True,
+                    mcp_url, json=tool_payload, headers=tool_headers
                 )
 
                 if response.status_code == 200:
-                    result = response.json()
+                    # Parse SSE response
+                    result = parse_sse_response(response.text)
+                    if result is None:
+                        return {"success": False, "error": "Failed to parse MCP response"}
                     if "error" in result:
                         return {"success": False, "error": result["error"]}
                     return {"success": True, "data": result.get("result", {})}

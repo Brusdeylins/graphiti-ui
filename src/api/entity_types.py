@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from ..auth.dependencies import CurrentUser
+from ..services.config_service import read_config
 from ..services.entity_type_service import get_entity_type_service
 
 router = APIRouter()
@@ -90,13 +91,21 @@ async def create_entity_type(
 @router.post("/reset")
 async def reset_entity_types(current_user: CurrentUser) -> dict:
     """Reset entity types to config defaults."""
-    # TODO: Load defaults from config file
-    # For now, return empty reset
+    # Load defaults from config.yaml
+    config = read_config()
+    default_types = config.get("graphiti", {}).get("entity_types", [])
+
+    if not default_types:
+        raise HTTPException(
+            status_code=500,
+            detail="No entity_types found in config.yaml under graphiti.entity_types",
+        )
+
     service = get_entity_type_service()
-    entity_types = await service.reset_to_defaults([])
+    entity_types = await service.reset_to_defaults(default_types)
     return {
         "success": True,
-        "message": "Entity types reset",
+        "message": f"Reset {len(entity_types)} entity types from config",
         "count": len(entity_types),
     }
 

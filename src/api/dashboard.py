@@ -152,12 +152,20 @@ async def get_service_status(current_user: CurrentUser) -> dict:
     settings = get_settings()
     config = read_config()
 
-    # Check Graphiti MCP Server
+    # Check FalkorDB directly via Redis PING
+    from ..services.queue_service import get_queue_service
+    import redis.asyncio as aioredis
+
     graphiti_status = "unknown"
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.get(f"{settings.graphiti_mcp_url}/health")
-            graphiti_status = "healthy" if response.status_code == 200 else "unhealthy"
+        r = aioredis.Redis(
+            host=settings.falkordb_host,
+            port=settings.falkordb_port,
+            password=settings.falkordb_password or None,
+        )
+        await r.ping()
+        await r.aclose()
+        graphiti_status = "healthy"
     except Exception:
         graphiti_status = "unreachable"
 
@@ -177,15 +185,13 @@ async def get_service_status(current_user: CurrentUser) -> dict:
         embedder_config["model"],
     )
 
-    # Check queue status from MCP server
+    # Check queue status directly from Redis
     queue_status = {"total_pending": 0, "currently_processing": 0, "error": None}
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.get(f"{settings.graphiti_mcp_url}/queue/status")
-            if response.status_code == 200:
-                data = response.json()
-                queue_status["total_pending"] = data.get("total_pending", 0)
-                queue_status["currently_processing"] = data.get("currently_processing", 0)
+        queue_service = get_queue_service()
+        status = await queue_service.get_status()
+        queue_status["total_pending"] = status.get("pending_count", 0)
+        queue_status["currently_processing"] = 1 if status.get("processing", False) else 0
     except Exception as e:
         queue_status["error"] = str(e)
 

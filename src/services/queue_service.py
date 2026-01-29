@@ -51,48 +51,46 @@ class QueueService:
             return []
 
     async def get_status(self) -> dict:
-        """Get queue processing status."""
+        """Get queue processing status.
+
+        Counts only actually pending messages:
+        - pending: messages delivered to consumer but not yet acknowledged (being processed)
+        - lag: messages not yet delivered to any consumer (waiting in queue)
+        """
         try:
             r = await self._get_redis()
-            group_ids = await self.get_all_group_ids()
+
+            # Find all queue streams
+            queue_keys = await r.keys("graphiti:queue:*")
+            # Filter out DLQ streams
+            queue_keys = [k for k in queue_keys if not k.endswith(":dlq")]
 
             total_pending = 0
+            total_processing = 0
             active_streams = 0
 
-            for gid in group_ids:
-                stream_key = self._stream_key(gid)
+            for stream_key in queue_keys:
                 try:
-                    # Check if stream exists and has pending messages
-                    stream_info = await r.xinfo_stream(stream_key)
-                    if stream_info:
-                        length = stream_info.get("length", 0)
-                        if length > 0:
-                            total_pending += length
+                    groups = await r.xinfo_groups(stream_key)
+                    for group in groups:
+                        # pending = delivered but not acknowledged (currently being processed)
+                        pending = group.get("pending", 0)
+                        # lag = not yet delivered (waiting in queue)
+                        lag = group.get("lag", 0)
+                        if pending > 0 or lag > 0:
+                            total_processing += pending
+                            total_pending += lag
                             active_streams += 1
                 except redis.ResponseError:
-                    # Stream doesn't exist
+                    # Stream or group doesn't exist
                     pass
                 except Exception as e:
                     logger.debug(f"Error checking stream {stream_key}: {e}")
 
-            # Also check consumer groups for pending messages
-            for gid in group_ids:
-                stream_key = self._stream_key(gid)
-                try:
-                    groups = await r.xinfo_groups(stream_key)
-                    for group in groups:
-                        pending = group.get("pending", 0)
-                        if pending > 0:
-                            total_pending += pending
-                except redis.ResponseError:
-                    pass
-                except Exception:
-                    pass
-
             return {
                 "success": True,
-                "processing": total_pending > 0,
-                "pending_count": total_pending,
+                "processing": (total_pending + total_processing) > 0,
+                "pending_count": total_pending + total_processing,
                 "active_streams": active_streams,
             }
         except Exception as e:

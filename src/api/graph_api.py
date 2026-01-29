@@ -373,6 +373,7 @@ class UpdateNodeRequest(BaseModel):
 
     name: str | None = None
     summary: str | None = None
+    entity_type: str | None = None  # Change node label/type
     group_id: str | None = None
     attributes: dict[str, str | None] | None = None  # null values = delete attribute
 
@@ -485,6 +486,7 @@ async def update_node(
             uuid=uuid,
             name=request.name,
             summary=request.summary,
+            entity_type=request.entity_type,
             group_id=group_id,
             attributes=request.attributes,
         )

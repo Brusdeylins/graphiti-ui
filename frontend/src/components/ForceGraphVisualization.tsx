@@ -135,10 +135,10 @@ export function ForceGraphVisualization({
   const centerStartRef = useRef({ x: 0, y: 0 });
 
 
-  // Build type color map
+  // Build type color map (use labels[0] as the actual entity type, fallback to type)
   const typeColors = useMemo(() => {
     if (!graphData) return {};
-    const types = [...new Set(graphData.nodes.map(n => n.type))].filter(Boolean).sort();
+    const types = [...new Set(graphData.nodes.map(n => n.labels?.[0] || n.type))].filter(Boolean).sort();
     const colors: Record<string, string> = {};
     types.forEach((type, index) => {
       colors[type] = colorPalette[index % colorPalette.length];
@@ -150,7 +150,8 @@ export function ForceGraphVisualization({
     if (highlightedNodes.has(node.id)) {
       return highlightColor;
     }
-    return typeColors[node.type] || defaultColor;
+    const nodeType = node.labels?.[0] || node.type;
+    return typeColors[nodeType] || defaultColor;
   }, [typeColors, highlightedNodes]);
 
   // 2D link color (more transparent, including highlight for particle visibility)
@@ -693,6 +694,28 @@ export function ForceGraphVisualization({
       }
     }
   }, [is3D]);
+
+  // Track previous graph identity to detect new graph load vs incremental changes
+  const prevGraphIdRef = useRef<string | null>(null);
+
+  // Auto zoom-to-fit only when a NEW graph is loaded (not on incremental node/edge changes)
+  useEffect(() => {
+    if (graphData && graphData.nodes.length > 0) {
+      // Create identity from first few node IDs (stable across incremental changes)
+      const graphId = graphData.nodes.slice(0, 5).map(n => n.id).sort().join(',');
+
+      if (prevGraphIdRef.current !== graphId) {
+        prevGraphIdRef.current = graphId;
+        // Small delay to let the force simulation start positioning nodes
+        const timer = setTimeout(() => {
+          handleZoomToFit();
+        }, 300);
+        return () => clearTimeout(timer);
+      }
+    } else if (!graphData || graphData.nodes.length === 0) {
+      prevGraphIdRef.current = null;
+    }
+  }, [graphData, handleZoomToFit]);
 
   // Handle mouse down - middle button for zoom fit, right button for pan start (2D only)
   const handleMouseDown = useCallback((e: React.MouseEvent) => {

@@ -67,15 +67,14 @@ function SortableField({ field, index, isProtected, onUpdate, onRemove }: Sortab
     >
       <div className="row g-2 align-items-center">
         <div className="col-auto">
-          <button
-            type="button"
-            className="btn btn-sm btn-ghost-secondary p-1"
-            style={{ cursor: 'grab', touchAction: 'none' }}
+          <div
+            className="d-flex align-items-center text-secondary"
+            style={{ cursor: 'grab', touchAction: 'none', padding: '4px' }}
             {...attributes}
             {...listeners}
           >
-            <IconGripVertical size={16} />
-          </button>
+            <IconGripVertical size={18} className="text-muted" />
+          </div>
         </div>
         <div className="col-3">
           <input

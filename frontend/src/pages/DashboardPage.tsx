@@ -2,8 +2,6 @@ import { useState, useEffect } from 'react';
 import { api } from '../api/client';
 import {
   IconExternalLink,
-  IconBrandGithub,
-  IconApi,
   IconDatabase,
   IconBrain,
   IconVectorBezier2,
@@ -257,65 +255,28 @@ export function DashboardPage() {
       </div>
 
       {/* External Links */}
-      <h3 className="mb-3">External Tools</h3>
-      <div className="card">
-        <div className="list-group list-group-flush">
-          {falkordbBrowserUrl && (
-            <a
-              href={falkordbBrowserUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="list-group-item list-group-item-action d-flex align-items-center"
-            >
-              <IconDatabase size={20} className="me-3 text-secondary" />
-              <div>
-                <strong>FalkorDB Browser</strong>
-                <div className="text-secondary small">Graph visualization & Cypher queries</div>
-              </div>
-              <IconExternalLink size={16} className="ms-auto text-secondary" />
-            </a>
-          )}
-          <a
-            href="/api/docs"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="list-group-item list-group-item-action d-flex align-items-center"
-          >
-            <IconApi size={20} className="me-3 text-secondary" />
-            <div>
-              <strong>API Documentation</strong>
-              <div className="text-secondary small">Swagger UI</div>
+      {falkordbBrowserUrl && (
+        <>
+          <h3 className="mb-3">External Tools</h3>
+          <div className="card">
+            <div className="list-group list-group-flush">
+              <a
+                href={falkordbBrowserUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="list-group-item list-group-item-action d-flex align-items-center"
+              >
+                <IconDatabase size={20} className="me-3 text-secondary" />
+                <div>
+                  <strong>FalkorDB Browser</strong>
+                  <div className="text-secondary small">Graph visualization & Cypher queries</div>
+                </div>
+                <IconExternalLink size={16} className="ms-auto text-secondary" />
+              </a>
             </div>
-            <IconExternalLink size={16} className="ms-auto text-secondary" />
-          </a>
-          <a
-            href="https://github.com/getzep/graphiti"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="list-group-item list-group-item-action d-flex align-items-center"
-          >
-            <IconBrandGithub size={20} className="me-3 text-secondary" />
-            <div>
-              <strong>Graphiti</strong>
-              <div className="text-secondary small">Knowledge graph library</div>
-            </div>
-            <IconExternalLink size={16} className="ms-auto text-secondary" />
-          </a>
-          <a
-            href="https://github.com/getzep/zep-graph-visualization"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="list-group-item list-group-item-action d-flex align-items-center"
-          >
-            <IconBrandGithub size={20} className="me-3 text-secondary" />
-            <div>
-              <strong>Zep Graph Visualization</strong>
-              <div className="text-secondary small">Reference implementation for graph visualization</div>
-            </div>
-            <IconExternalLink size={16} className="ms-auto text-secondary" />
-          </a>
-        </div>
-      </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
