@@ -392,20 +392,35 @@ class GraphitiClient:
             if summary is not None and entity.summary:
                 await entity.generate_summary_embedding(self.embedder)
 
-            # Save changes
-            await entity.save(driver)
-
-            # Change entity type (labels) if specified
+            # Change entity type (labels) if specified - BEFORE save
             if entity_type is not None:
                 # Sanitize label name (FalkorDB doesn't support parameterized labels)
                 safe_type = entity_type.replace("'", "").replace('"', "").replace("\\", "")
-                # Add the new label (node keeps Entity label as base)
-                add_label_query = f"""
-                MATCH (n:Entity {{uuid: $uuid}})
-                SET n:`{safe_type}`
-                RETURN n.uuid
-                """
-                await driver.execute_query(add_label_query, uuid=uuid)
+
+                # Remove ALL old labels (except Entity base) via Cypher
+                old_labels = entity.labels or []
+                for old_label in old_labels:
+                    safe_old = old_label.replace("'", "").replace('"', "").replace("\\", "")
+                    if safe_old and safe_old != "Entity":
+                        remove_query = f"""
+                        MATCH (n:Entity {{uuid: $uuid}})
+                        REMOVE n:`{safe_old}`
+                        """
+                        await driver.execute_query(remove_query, uuid=uuid)
+
+                # Add the new label
+                if safe_type and safe_type != "Entity":
+                    add_label_query = f"""
+                    MATCH (n:Entity {{uuid: $uuid}})
+                    SET n:`{safe_type}`
+                    """
+                    await driver.execute_query(add_label_query, uuid=uuid)
+
+                # Update entity.labels for consistency
+                entity.labels = [safe_type] if safe_type and safe_type != "Entity" else []
+
+            # Save changes (name, summary, attributes, labels)
+            await entity.save(driver)
 
             return {"success": True, "uuid": uuid}
         except NodeNotFoundError:

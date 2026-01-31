@@ -1668,6 +1668,7 @@ export function VisualizationPage() {
                       <option value="Entity">Entity</option>
                       {entityTypes
                         .filter(et => et.name !== 'Entity')
+                        .sort((a, b) => a.name.localeCompare(b.name))
                         .map(et => (
                           <option key={et.name} value={et.name}>{et.name}</option>
                         ))

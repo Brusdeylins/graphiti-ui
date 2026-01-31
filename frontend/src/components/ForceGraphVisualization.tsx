@@ -233,9 +233,10 @@ export function ForceGraphVisualization({
       const showLbls = showLabelsRef.current;
 
       // Threshold: higher slider = need to be closer (smaller distance)
-      // nodeLabelZoom 1 = show from distance 1000, nodeLabelZoom 5 = show from distance 600
-      const nodeThreshold = (11 - nodeZoom) * 100;
-      const edgeThreshold = (11 - edgeZoom) * 100;
+      // 3D uses 2x zoom factor so slider 5 acts like 10 (labels appear later)
+      // nodeLabelZoom 1 = show from distance 900, nodeLabelZoom 5 = show from distance 100
+      const nodeThreshold = (11 - nodeZoom * 2) * 100;
+      const edgeThreshold = (11 - edgeZoom * 2) * 100;
 
       // Reusable Vector3 for world position calculation
       const worldPos = new THREE.Vector3();

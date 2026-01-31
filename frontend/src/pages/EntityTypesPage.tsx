@@ -169,7 +169,11 @@ export function EntityTypesPage() {
     try {
       setIsLoading(true);
       const response = await api.get('/entity-types');
-      setEntityTypes(response.data || []);
+      // Sort entity types alphabetically by name
+      const sorted = (response.data || []).sort((a: EntityType, b: EntityType) =>
+        a.name.localeCompare(b.name)
+      );
+      setEntityTypes(sorted);
       setError(null);
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Failed to load entity types');
