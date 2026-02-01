@@ -63,6 +63,7 @@ interface Edge {
   type: string;
   fact?: string;
   uuid?: string;
+  group_id?: string;
   created_at?: string;
   valid_at?: string | null;
   expired_at?: string | null;
@@ -458,14 +459,17 @@ export function VisualizationPage() {
   selectedGroupRef.current = selectedGroup;
 
   // Load episode content in background (no UI toggle)
-  const loadEpisodeBackground = useCallback(async (episodeUuid: string) => {
+  // groupId: pass edge's group_id to ensure correct graph is queried
+  const loadEpisodeBackground = useCallback(async (episodeUuid: string, groupId?: string) => {
     if (loadedEpisodesRef.current[episodeUuid] || loadingEpisodesRef.current.has(episodeUuid)) return;
 
     setLoadingEpisodes(prev => new Set(prev).add(episodeUuid));
     try {
       // Include group_id for FalkorDB (each group is a separate graph)
+      // Use passed groupId (from edge) or fall back to selectedGroup
       const params = new URLSearchParams();
-      if (selectedGroupRef.current) params.append('group_id', selectedGroupRef.current);
+      const effectiveGroupId = groupId || selectedGroupRef.current;
+      if (effectiveGroupId) params.append('group_id', effectiveGroupId);
       const response = await api.get(`/graph/episode/${episodeUuid}?${params}`);
       if (response.data.success && response.data.episode) {
         setLoadedEpisodes(prev => ({
@@ -486,7 +490,10 @@ export function VisualizationPage() {
 
   // Handle edge click - highlight source and target nodes
   const handleEdgeClick = useCallback((edge: Edge, edgeIndex: number) => {
-    setSelectedEdge(edge);
+    // ForceGraph modifies edge objects and loses properties like group_id
+    // Look up the original edge from graphData to preserve all properties
+    const originalEdge = graphData?.edges.find(e => e.uuid === edge.uuid) || edge;
+    setSelectedEdge(originalEdge);
     setSelectedNode(null);
     setExpandedEpisode(null); // Reset expanded episode when selecting new edge
 
@@ -497,14 +504,14 @@ export function VisualizationPage() {
     setHighlightedEdges(new Set([edgeIndex]));
 
     // Pre-load episodes for this edge (using ref to avoid dependency)
-    if (edge.episodes && edge.episodes.length > 0) {
-      edge.episodes.forEach(episodeId => {
+    if (originalEdge.episodes && originalEdge.episodes.length > 0) {
+      originalEdge.episodes.forEach(episodeId => {
         if (!loadedEpisodesRef.current[episodeId]) {
-          loadEpisodeBackground(episodeId);
+          loadEpisodeBackground(episodeId, originalEdge.group_id);
         }
       });
     }
-  }, [loadEpisodeBackground]);
+  }, [loadEpisodeBackground, graphData]);
 
   // Clear selection
   const clearSelection = useCallback(() => {
@@ -542,7 +549,9 @@ export function VisualizationPage() {
 
   // Navigate to an edge from sidebar
   const navigateToEdge = useCallback((edge: Edge) => {
-    setSelectedEdge(edge);
+    // Ensure we have the original edge with all properties (including group_id)
+    const originalEdge = graphData?.edges.find(e => e.uuid === edge.uuid) || edge;
+    setSelectedEdge(originalEdge);
     setSelectedNode(null);
     setExpandedEpisode(null); // Reset expanded episode when navigating to new edge
 
@@ -555,14 +564,14 @@ export function VisualizationPage() {
     }
 
     // Pre-load episodes for this edge
-    if (edge.episodes && edge.episodes.length > 0) {
-      edge.episodes.forEach(episodeId => {
+    if (originalEdge.episodes && originalEdge.episodes.length > 0) {
+      originalEdge.episodes.forEach(episodeId => {
         if (!loadedEpisodes[episodeId]) {
-          loadEpisodeBackground(episodeId);
+          loadEpisodeBackground(episodeId, originalEdge.group_id);
         }
       });
     }
-  }, [loadedEpisodes, loadEpisodeBackground]);
+  }, [loadedEpisodes, loadEpisodeBackground, graphData]);
 
   // Get a node by ID from graphData
   const getNodeById = useCallback((id: string): Node | undefined => {
@@ -623,7 +632,8 @@ export function VisualizationPage() {
   }, [entityTypes]);
 
   // Load episode content on demand (with UI toggle)
-  const loadEpisode = useCallback(async (episodeUuid: string) => {
+  // groupId: pass edge's group_id to ensure correct graph is queried (important for "All Graphs" view)
+  const loadEpisode = useCallback(async (episodeUuid: string, groupId?: string) => {
     // Already loaded - just toggle
     if (loadedEpisodes[episodeUuid]) {
       setExpandedEpisode(expandedEpisode === episodeUuid ? null : episodeUuid);
@@ -638,8 +648,10 @@ export function VisualizationPage() {
     setLoadingEpisodes(prev => new Set(prev).add(episodeUuid));
     try {
       // Include group_id for FalkorDB (each group is a separate graph)
+      // Use passed groupId (from edge) or fall back to selectedGroup
       const params = new URLSearchParams();
-      if (selectedGroup) params.append('group_id', selectedGroup);
+      const effectiveGroupId = groupId || selectedGroup;
+      if (effectiveGroupId) params.append('group_id', effectiveGroupId);
       const response = await api.get(`/graph/episode/${episodeUuid}?${params}`);
       if (response.data.success && response.data.episode) {
         setLoadedEpisodes(prev => ({
@@ -2073,7 +2085,7 @@ export function VisualizationPage() {
                         <div
                           className={`d-flex align-items-center gap-2 ${expandedEpisode === episodeId ? '' : 'cursor-pointer'}`}
                           style={{ cursor: 'pointer' }}
-                          onClick={() => loadEpisode(episodeId)}
+                          onClick={() => loadEpisode(episodeId, selectedEdge.group_id)}
                         >
                           {loadingEpisodes.has(episodeId) ? (
                             <span className="spinner-border spinner-border-sm text-secondary" />

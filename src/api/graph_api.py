@@ -91,6 +91,7 @@ async def get_graph_data(
                 "type": edge.get("name") or edge.get("type", "RELATES_TO"),
                 "fact": edge.get("fact", ""),
                 "uuid": edge.get("uuid", ""),
+                "group_id": edge.get("group_id", ""),
                 "created_at": edge.get("created_at", ""),
                 "valid_at": edge.get("valid_at"),
                 "expired_at": edge.get("expired_at"),
