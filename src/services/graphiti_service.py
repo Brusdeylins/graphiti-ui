@@ -490,6 +490,7 @@ class GraphitiClient:
                 "success": True,
                 "uuid": edge.uuid,
                 "name": edge.name,
+                "episodes": edge.episodes,
             }
         except Exception as e:
             logger.exception("Error creating edge")

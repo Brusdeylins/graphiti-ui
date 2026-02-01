@@ -805,6 +805,8 @@ export function VisualizationPage() {
           type: relationshipType,
           fact: newEdgeFact.trim() || `${relationshipType} relationship`,
           created_at: new Date().toISOString(),
+          group_id: selectedGroup,
+          episodes: response.data.data?.episodes || [],
         };
         setGraphData(prev => prev ? {
           ...prev,
