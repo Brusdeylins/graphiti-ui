@@ -11,7 +11,6 @@ from graphiti_core import Graphiti
 from graphiti_core.driver.falkordb_driver import FalkorDriver
 from graphiti_core.embedder import OpenAIEmbedder, OpenAIEmbedderConfig
 from graphiti_core.errors import EdgeNotFoundError, NodeNotFoundError
-from graphiti_core.nodes import EntityNode, EpisodicNode
 
 from ..config import get_settings
 
@@ -272,29 +271,15 @@ class GraphitiClient:
     async def get_graph_stats(self, group_id: str | None = None) -> dict:
         """Get graph statistics."""
         try:
-            driver = self._get_driver(group_id)
-
-            # Count nodes
-            node_query = "MATCH (n:Entity) RETURN count(n) AS count"
-            node_result, _, _ = await driver.execute_query(node_query)
-            node_count = node_result[0]["count"] if node_result else 0
-
-            # Count edges
-            edge_query = "MATCH ()-[r:RELATES_TO]->() RETURN count(r) AS count"
-            edge_result, _, _ = await driver.execute_query(edge_query)
-            edge_count = edge_result[0]["count"] if edge_result else 0
-
-            # Count episodes
-            episode_query = "MATCH (e:Episodic) RETURN count(e) AS count"
-            episode_result, _, _ = await driver.execute_query(episode_query)
-            episode_count = episode_result[0]["count"] if episode_result else 0
+            graphiti = self._get_graphiti(group_id)
+            stats = await graphiti.get_graph_stats(group_id=group_id)
 
             return {
                 "success": True,
                 "stats": {
-                    "nodes": node_count,
-                    "edges": edge_count,
-                    "episodes": episode_count,
+                    "nodes": stats["node_count"],
+                    "edges": stats["edge_count"],
+                    "episodes": stats["episode_count"],
                 },
             }
         except Exception as e:
@@ -308,8 +293,8 @@ class GraphitiClient:
     async def get_node_details(self, uuid: str, group_id: str | None = None) -> dict:
         """Get detailed information about a specific node."""
         try:
-            driver = self._get_driver(group_id)
-            node = await EntityNode.get_by_uuid(driver, uuid)
+            graphiti = self._get_graphiti(group_id)
+            node = await graphiti.get_entity(uuid)
             return {
                 "success": True,
                 "node": {
@@ -371,13 +356,12 @@ class GraphitiClient:
         """Update an entity node using Graphiti class (auto-regenerates embeddings)."""
         try:
             graphiti = self._get_graphiti(group_id)
-            driver = self._get_driver(group_id)
 
             # Handle attribute deletion (set value to None)
             merged_attributes = None
             if attributes:
                 # First get current entity to handle deletions
-                entity = await EntityNode.get_by_uuid(driver, uuid)
+                entity = await graphiti.get_entity(uuid)
                 merged_attributes = dict(entity.attributes)
                 for key, value in attributes.items():
                     if value is None:
@@ -385,28 +369,7 @@ class GraphitiClient:
                     else:
                         merged_attributes[key] = value
 
-            # Handle entity type change via direct Cypher (labels need special handling)
-            if entity_type is not None:
-                safe_type = entity_type.replace("'", "").replace('"', "").replace("\\", "")
-                entity = await EntityNode.get_by_uuid(driver, uuid)
-
-                # Remove old labels
-                for old_label in entity.labels or []:
-                    safe_old = old_label.replace("'", "").replace('"', "").replace("\\", "")
-                    if safe_old and safe_old != "Entity":
-                        await driver.execute_query(
-                            f"MATCH (n:Entity {{uuid: $uuid}}) REMOVE n:`{safe_old}`",
-                            uuid=uuid,
-                        )
-
-                # Add new label
-                if safe_type and safe_type != "Entity":
-                    await driver.execute_query(
-                        f"MATCH (n:Entity {{uuid: $uuid}}) SET n:`{safe_type}`",
-                        uuid=uuid,
-                    )
-
-            # Use Graphiti.update_entity for name/summary/attributes (handles embeddings)
+            # Graphiti.update_entity handles labels, embeddings, and attributes
             await graphiti.update_entity(
                 uuid=uuid,
                 name=name,
@@ -441,8 +404,8 @@ class GraphitiClient:
     async def get_edge_details(self, uuid: str, group_id: str | None = None) -> dict:
         """Get detailed information about a specific edge."""
         try:
-            driver = self._get_driver(group_id)
-            edge = await EntityEdge.get_by_uuid(driver, uuid)
+            graphiti = self._get_graphiti(group_id)
+            edge = await graphiti.get_edge(uuid)
             return {
                 "success": True,
                 "edge": {
@@ -539,8 +502,8 @@ class GraphitiClient:
     async def get_episode_details(self, uuid: str, group_id: str | None = None) -> dict:
         """Get detailed information about a specific episode."""
         try:
-            driver = self._get_driver(group_id)
-            episode = await EpisodicNode.get_by_uuid(driver, uuid)
+            graphiti = self._get_graphiti(group_id)
+            episode = await graphiti.get_episode(uuid)
             return {
                 "success": True,
                 "episode": {
@@ -564,16 +527,18 @@ class GraphitiClient:
     async def get_episodes(self, limit: int = 10, group_ids: list[str] | None = None) -> dict:
         """Get recent episodes."""
         try:
-            if group_ids:
-                driver = self._get_driver(group_ids[0])
-            else:
-                driver = self.driver
+            effective_group_ids = group_ids or [self.settings.graphiti_group_id]
+            all_episodes = []
 
-            episodes = await EpisodicNode.get_by_group_ids(
-                driver,
-                group_ids=group_ids or [self.settings.graphiti_group_id],
-                limit=limit,
-            )
+            # Fetch episodes from each group
+            for gid in effective_group_ids:
+                graphiti = self._get_graphiti(gid)
+                episodes = await graphiti.get_episodes_by_group_id(gid, limit=limit)
+                all_episodes.extend(episodes)
+
+            # Sort by created_at and limit
+            all_episodes.sort(key=lambda e: e.created_at or "", reverse=True)
+            all_episodes = all_episodes[:limit]
 
             return {
                 "success": True,
@@ -589,7 +554,7 @@ class GraphitiClient:
                                     "source": ep.source.value,
                                     "group_id": ep.group_id,
                                     "created_at": ep.created_at.isoformat() if ep.created_at else None,
-                                } for ep in episodes]),
+                                } for ep in all_episodes]),
                             }
                         ],
                     },
@@ -599,12 +564,10 @@ class GraphitiClient:
             logger.exception("Error getting episodes")
             return {"success": False, "error": str(e)}
 
-    async def delete_episode(self, episode_uuid: str) -> dict:
+    async def delete_episode(self, episode_uuid: str, group_id: str | None = None) -> dict:
         """Delete an episode using Graphiti class."""
         try:
-            # First get episode to find its group_id
-            episode = await EpisodicNode.get_by_uuid(self.driver, episode_uuid)
-            graphiti = self._get_graphiti(episode.group_id)
+            graphiti = self._get_graphiti(group_id)
             await graphiti.delete_episode(episode_uuid)
             return {"success": True, "deleted": episode_uuid}
         except NodeNotFoundError:
@@ -831,8 +794,8 @@ class GraphitiClient:
             if any(kw in query_upper for kw in ["DELETE", "REMOVE", "SET", "CREATE", "MERGE"]):
                 return {"success": False, "error": "Only read queries are allowed"}
 
-            driver = self._get_driver(group_id)
-            records, header, _ = await driver.execute_query(query)
+            graphiti = self._get_graphiti(group_id)
+            records, header, _ = await graphiti.execute_query(query)
 
             return {
                 "success": True,
