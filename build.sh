@@ -9,7 +9,7 @@ cd "$(dirname "$0")/.."
 
 echo "Building Graphiti UI container..."
 echo "Build context: $(pwd)"
-docker build -t graphiti-ui:latest -f graphiti-ui/Dockerfile .
+docker build --no-cache -t graphiti-ui:latest -f graphiti-ui/Dockerfile .
 
 echo ""
 echo "Done."
