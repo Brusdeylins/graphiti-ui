@@ -881,9 +881,10 @@ export function VisualizationPage() {
       }
     }
 
-    // Find entity type for field order
+    // Find entity type for field order and set selected type for dropdown
     const nodeEntityType = selectedNode.labels?.[0] || selectedNode.type;
     const entityType = currentEntityTypes.find(et => et.name === nodeEntityType);
+    setSelectedEntityType(entityType || null);
     const fieldOrder = entityType?.fields?.map(f => f.name) || [];
 
     // Build attrs in entity type field order (JS objects preserve insertion order)
