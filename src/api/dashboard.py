@@ -74,17 +74,29 @@ def get_embedder_config(config: dict[str, Any]) -> dict[str, str]:
 
 @router.get("/stats")
 async def get_dashboard_stats(current_user: CurrentUser) -> dict:
-    """Get dashboard statistics."""
+    """Get dashboard statistics from MCP server."""
     settings = get_settings()
 
-    # TODO: Implement actual stats from Graphiti MCP
-    # For now, return placeholder data
-    return {
-        "episodes_count": 0,
-        "entities_count": 0,
-        "relationships_count": 0,
-        "last_activity": None,
-    }
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(f"{settings.graphiti_mcp_url}/stats")
+            response.raise_for_status()
+            data = response.json()
+            return {
+                "episodes_count": data.get("episodes", 0),
+                "entities_count": data.get("nodes", 0),
+                "relationships_count": data.get("edges", 0),
+                "last_activity": None,  # TODO: Track last activity time
+            }
+    except Exception as e:
+        # Fall back to zeros on error
+        return {
+            "episodes_count": 0,
+            "entities_count": 0,
+            "relationships_count": 0,
+            "last_activity": None,
+            "error": str(e),
+        }
 
 
 async def check_model_availability(

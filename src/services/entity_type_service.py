@@ -1,20 +1,17 @@
-"""Entity Type Service with direct Redis access.
+"""Entity Type Service - HTTP client to MCP server.
 
-Manages entity types stored in Redis under 'graphiti:entity_types'.
+All entity type management is delegated to the MCP server which stores
+entity types in a JSON file. This makes the UI database-neutral.
 """
 
-import json
 import logging
-from datetime import datetime, timezone
 from typing import Any
 
-import redis.asyncio as redis
+import httpx
 
 from ..config import get_settings
 
 logger = logging.getLogger(__name__)
-
-ENTITY_TYPES_KEY = "graphiti:entity_types"
 
 
 class EntityType:
@@ -33,7 +30,7 @@ class EntityType:
         self.description = description
         self.fields = fields or []
         self.source = source
-        self.created_at = created_at or datetime.now(timezone.utc).isoformat()
+        self.created_at = created_at
         self.modified_at = modified_at
 
     def to_dict(self) -> dict[str, Any]:
@@ -59,71 +56,48 @@ class EntityType:
 
 
 class EntityTypeService:
-    """Service for managing entity types in Redis."""
+    """Service for managing entity types via MCP HTTP endpoints."""
 
     def __init__(self):
-        self._redis: redis.Redis | None = None
+        self._mcp_url: str | None = None
 
-    async def _get_redis(self) -> redis.Redis:
-        """Get or create Redis connection."""
-        if self._redis is None:
+    @property
+    def mcp_url(self) -> str:
+        """Get the MCP server URL."""
+        if self._mcp_url is None:
             settings = get_settings()
-            self._redis = redis.Redis(
-                host=settings.falkordb_host,
-                port=settings.falkordb_port,
-                password=settings.falkordb_password or None,
-                decode_responses=True,
-            )
-        return self._redis
+            self._mcp_url = settings.graphiti_mcp_url
+        return self._mcp_url
 
     async def get_all(self) -> list[EntityType]:
-        """Get all entity types."""
+        """Get all entity types from MCP server."""
         try:
-            r = await self._get_redis()
-            data = await r.get(ENTITY_TYPES_KEY)
-            if not data:
-                return []
-
-            types_data = json.loads(data)
-
-            # Handle both array format (MCP server) and dict format (legacy)
-            if isinstance(types_data, list):
-                return [EntityType.from_dict(t) for t in types_data]
-            else:
-                return [EntityType.from_dict(t) for t in types_data.values()]
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(f"{self.mcp_url}/entity-types")
+                response.raise_for_status()
+                data = response.json()
+                return [EntityType.from_dict(t) for t in data]
         except Exception as e:
-            logger.error(f"Error getting entity types: {e}")
+            logger.error(f"Error getting entity types from MCP: {e}")
             return []
 
     async def get_by_name(self, name: str) -> EntityType | None:
-        """Get entity type by name."""
+        """Get entity type by name from MCP server."""
         try:
-            r = await self._get_redis()
-            data = await r.get(ENTITY_TYPES_KEY)
-            if not data:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(f"{self.mcp_url}/entity-types/{name}")
+                if response.status_code == 404:
+                    return None
+                response.raise_for_status()
+                return EntityType.from_dict(response.json())
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
                 return None
-
-            types_data = json.loads(data)
-
-            # Handle both array format (MCP server) and dict format (legacy)
-            if isinstance(types_data, list):
-                for t in types_data:
-                    if t.get("name") == name:
-                        return EntityType.from_dict(t)
-                return None
-            else:
-                if name in types_data:
-                    return EntityType.from_dict(types_data[name])
-                return None
-        except Exception as e:
-            logger.error(f"Error getting entity type {name}: {e}")
+            logger.error(f"Error getting entity type {name} from MCP: {e}")
             return None
-
-    def _to_list(self, types_data: list | dict) -> list[dict[str, Any]]:
-        """Convert entity types to list format (normalizes dict to list)."""
-        if isinstance(types_data, list):
-            return types_data
-        return list(types_data.values())
+        except Exception as e:
+            logger.error(f"Error getting entity type {name} from MCP: {e}")
+            return None
 
     async def create(
         self,
@@ -131,31 +105,21 @@ class EntityTypeService:
         description: str,
         fields: list[dict[str, Any]] | None = None,
     ) -> EntityType:
-        """Create a new entity type."""
-        r = await self._get_redis()
-
-        # Load existing (as list)
-        data = await r.get(ENTITY_TYPES_KEY)
-        types_list = self._to_list(json.loads(data)) if data else []
-
-        # Check if exists
-        if any(t.get("name") == name for t in types_list):
-            raise ValueError(f"Entity type '{name}' already exists")
-
-        # Create new
-        entity_type = EntityType(
-            name=name,
-            description=description,
-            fields=fields or [],
-            source="api",
-        )
-        types_list.append(entity_type.to_dict())
-
-        # Save as list
-        await r.set(ENTITY_TYPES_KEY, json.dumps(types_list))
-        logger.info(f"Created entity type: {name}")
-
-        return entity_type
+        """Create a new entity type via MCP server."""
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{self.mcp_url}/entity-types",
+                json={
+                    "name": name,
+                    "description": description,
+                    "fields": fields or [],
+                },
+            )
+            if response.status_code == 409:
+                raise ValueError(f"Entity type '{name}' already exists")
+            response.raise_for_status()
+            logger.info(f"Created entity type via MCP: {name}")
+            return EntityType.from_dict(response.json())
 
     async def update(
         self,
@@ -163,81 +127,64 @@ class EntityTypeService:
         description: str | None = None,
         fields: list[dict[str, Any]] | None = None,
     ) -> EntityType | None:
-        """Update an entity type."""
-        r = await self._get_redis()
+        """Update an entity type via MCP server."""
+        try:
+            payload: dict[str, Any] = {}
+            if description is not None:
+                payload["description"] = description
+            if fields is not None:
+                payload["fields"] = fields
 
-        # Load existing (as list)
-        data = await r.get(ENTITY_TYPES_KEY)
-        if not data:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.put(
+                    f"{self.mcp_url}/entity-types/{name}",
+                    json=payload,
+                )
+                if response.status_code == 404:
+                    return None
+                response.raise_for_status()
+                logger.info(f"Updated entity type via MCP: {name}")
+                return EntityType.from_dict(response.json())
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                return None
+            raise
+        except Exception as e:
+            logger.error(f"Error updating entity type {name} via MCP: {e}")
             return None
 
-        types_list = self._to_list(json.loads(data))
-
-        # Find and update
-        for i, t in enumerate(types_list):
-            if t.get("name") == name:
-                if description is not None:
-                    types_list[i]["description"] = description
-                if fields is not None:
-                    types_list[i]["fields"] = fields
-                types_list[i]["modified_at"] = datetime.now(timezone.utc).isoformat()
-                types_list[i]["source"] = "api"
-
-                # Save as list
-                await r.set(ENTITY_TYPES_KEY, json.dumps(types_list))
-                logger.info(f"Updated entity type: {name}")
-                return EntityType.from_dict(types_list[i])
-
-        return None
-
     async def delete(self, name: str) -> bool:
-        """Delete an entity type."""
-        r = await self._get_redis()
-
-        # Load existing (as list)
-        data = await r.get(ENTITY_TYPES_KEY)
-        if not data:
+        """Delete an entity type via MCP server."""
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.delete(f"{self.mcp_url}/entity-types/{name}")
+                if response.status_code == 404:
+                    return False
+                response.raise_for_status()
+                logger.info(f"Deleted entity type via MCP: {name}")
+                return True
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                return False
+            raise
+        except Exception as e:
+            logger.error(f"Error deleting entity type {name} via MCP: {e}")
             return False
 
-        types_list = self._to_list(json.loads(data))
-        original_len = len(types_list)
+    async def reset_to_defaults(self) -> list[EntityType]:
+        """Reset entity types to defaults via MCP server."""
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(f"{self.mcp_url}/entity-types/reset")
+            response.raise_for_status()
+            result = response.json()
+            logger.info(f"Reset entity types via MCP: {result.get('count', 0)} types")
 
-        # Filter out the one to delete
-        types_list = [t for t in types_list if t.get("name") != name]
-
-        if len(types_list) == original_len:
-            return False  # Not found
-
-        # Save as list
-        await r.set(ENTITY_TYPES_KEY, json.dumps(types_list))
-        logger.info(f"Deleted entity type: {name}")
-
-        return True
-
-    async def reset_to_defaults(self, default_types: list[dict[str, Any]]) -> list[EntityType]:
-        """Reset entity types to defaults."""
-        r = await self._get_redis()
-
-        types_list = []
-        for et in default_types:
-            entity_type = EntityType(
-                name=et["name"],
-                description=et.get("description", ""),
-                fields=et.get("fields", []),
-                source="config",
-            )
-            types_list.append(entity_type.to_dict())
-
-        await r.set(ENTITY_TYPES_KEY, json.dumps(types_list))
-        logger.info(f"Reset {len(types_list)} entity types to defaults")
-
-        return [EntityType.from_dict(t) for t in types_list]
+            # Fetch the updated list
+            return await self.get_all()
 
     async def close(self):
-        """Close Redis connection."""
-        if self._redis:
-            await self._redis.aclose()
-            self._redis = None
+        """Close the service (no-op for HTTP client)."""
+        pass
 
 
 # Singleton instance

@@ -223,49 +223,19 @@ class GraphitiClient:
         return edges
 
     async def get_group_ids(self) -> dict:
-        """Get all available group IDs from FalkorDB.
+        """Get all available group IDs from MCP server.
 
-        FalkorDB stores each group as a separate graph (Redis key with type 'graphdata').
+        Delegates to MCP's /groups endpoint which handles the database-specific
+        logic for listing groups (FalkorDB vs Neo4j).
         """
-        # Only exclude the FalkorDB database name itself (configured in config.yaml)
-        # All other graphs are user-created groups that should be visible
-        EXCLUDED_GRAPHS = {
-            "graphiti",  # Database name from config, not a real group
-            "default_db",  # FalkorDB default database name
-        }
-
         try:
-            import redis.asyncio as redis_async
-
-            r = redis_async.Redis(
-                host=self.settings.falkordb_host,
-                port=self.settings.falkordb_port,
-                password=self.settings.falkordb_password or None,
-                decode_responses=True,
-            )
-
-            group_ids = []
-            keys = await r.keys("*")
-
-            for key in keys:
-                # Skip internal/system keys
-                if key.startswith("_") or key.startswith("graphiti:") or key.startswith("telemetry{"):
-                    continue
-
-                # Skip known system/test graphs
-                if key.lower() in EXCLUDED_GRAPHS:
-                    continue
-
-                # Check if it's a FalkorDB graph
-                key_type = await r.type(key)
-                if key_type == "graphdata":
-                    group_ids.append(key)
-
-            await r.aclose()
-
-            return {"success": True, "group_ids": sorted(group_ids)}
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(f"{self.settings.graphiti_mcp_url}/groups")
+                response.raise_for_status()
+                data = response.json()
+                return {"success": True, "group_ids": data.get("groups", [])}
         except Exception as e:
-            logger.exception("Error getting group IDs")
+            logger.exception("Error getting group IDs from MCP")
             return {"success": False, "group_ids": [], "error": str(e)}
 
     async def get_graph_stats(self, group_id: str | None = None) -> dict:
