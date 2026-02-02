@@ -717,6 +717,33 @@ class GraphitiClient:
     # Query Execution
     # =========================================================================
 
+    def _serialize_value(self, value: Any) -> Any:
+        """Serialize a value for JSON response."""
+        if value is None:
+            return None
+        # FalkorDB Node
+        if hasattr(value, 'properties') and hasattr(value, 'labels'):
+            return {
+                'type': 'node',
+                'labels': list(value.labels) if value.labels else [],
+                'properties': dict(value.properties) if value.properties else {},
+            }
+        # FalkorDB Edge/Relationship
+        if hasattr(value, 'properties') and hasattr(value, 'relation'):
+            return {
+                'type': 'edge',
+                'relation': value.relation,
+                'properties': dict(value.properties) if value.properties else {},
+            }
+        # Lists
+        if isinstance(value, list):
+            return [self._serialize_value(v) for v in value]
+        # Dicts
+        if isinstance(value, dict):
+            return {k: self._serialize_value(v) for k, v in value.items()}
+        # Primitives
+        return value
+
     async def execute_query(self, query: str, group_id: str | None = None) -> dict:
         """Execute a read-only Cypher query."""
         try:
@@ -728,9 +755,15 @@ class GraphitiClient:
             graphiti = self._get_graphiti(group_id)
             records, header, _ = await graphiti.execute_query(query)
 
+            # Serialize FalkorDB objects to JSON-safe dicts
+            serialized_records = [
+                {k: self._serialize_value(v) for k, v in record.items()}
+                for record in records
+            ]
+
             return {
                 "success": True,
-                "results": records,
+                "results": serialized_records,
                 "columns": header,
             }
         except Exception as e:
