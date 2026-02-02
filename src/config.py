@@ -25,11 +25,23 @@ class Settings(BaseSettings):
     graphiti_mcp_external_url: str = "http://localhost:8000"
     graphiti_mcp_container: str = "graphiti-mcp"  # Container name for restart
 
-    # FalkorDB Direct Connection
+    # Graph Database Configuration
+    graph_provider: str = "falkordb"  # falkordb, neo4j, kuzu
+
+    # FalkorDB Connection
     falkordb_host: str = "falkordb"
     falkordb_port: int = 6379
     falkordb_password: str = ""
     falkordb_database: str = "graphiti"
+
+    # Neo4j Connection (if graph_provider=neo4j)
+    neo4j_uri: str = "bolt://localhost:7687"
+    neo4j_user: str = "neo4j"
+    neo4j_password: str = ""
+    neo4j_database: str = "neo4j"
+
+    # Kuzu Connection (if graph_provider=kuzu)
+    kuzu_db_path: str = ":memory:"
 
     # Graphiti Settings
     graphiti_group_id: str = "main"  # Default group_id for graph operations

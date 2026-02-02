@@ -164,20 +164,15 @@ async def get_service_status(current_user: CurrentUser) -> dict:
     settings = get_settings()
     config = read_config()
 
-    # Check FalkorDB directly via Redis PING
+    # Check graph database via driver's health_check (DB-neutral)
     from ..services.queue_service import get_queue_service
-    import redis.asyncio as aioredis
+    from ..services.graphiti_service import get_graphiti_client
 
     graphiti_status = "unknown"
     try:
-        r = aioredis.Redis(
-            host=settings.falkordb_host,
-            port=settings.falkordb_port,
-            password=settings.falkordb_password or None,
-        )
-        await r.ping()
-        await r.aclose()
-        graphiti_status = "healthy"
+        client = get_graphiti_client()
+        health = await client.health_check()
+        graphiti_status = "healthy" if health.get("healthy") else "unreachable"
     except Exception:
         graphiti_status = "unreachable"
 
@@ -212,9 +207,10 @@ async def get_service_status(current_user: CurrentUser) -> dict:
             "status": graphiti_status,
             "url": settings.graphiti_mcp_url,
         },
-        "falkordb": {
-            "status": "unknown",  # TODO: Check FalkorDB
-            "browser_url": settings.falkordb_browser_url,
+        "graph_database": {
+            "status": graphiti_status,
+            "provider": settings.graph_provider,
+            "browser_url": settings.falkordb_browser_url if settings.graph_provider == "falkordb" else None,
         },
         "llm": {
             "status": llm_check["status"],

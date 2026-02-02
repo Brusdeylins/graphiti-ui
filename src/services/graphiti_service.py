@@ -8,11 +8,12 @@ from typing import Any
 
 import httpx
 from graphiti_core import Graphiti
-from graphiti_core.driver.falkordb_driver import FalkorDriver
+from graphiti_core.driver.driver import GraphDriver
 from graphiti_core.embedder import OpenAIEmbedder, OpenAIEmbedderConfig
 from graphiti_core.errors import EdgeNotFoundError, NodeNotFoundError
 
 from ..config import get_settings
+from .driver_factory import create_driver
 
 logger = logging.getLogger(__name__)
 
@@ -22,20 +23,15 @@ class GraphitiClient:
 
     def __init__(self):
         self.settings = get_settings()
-        self._driver: FalkorDriver | None = None
+        self._driver: GraphDriver | None = None
         self._embedder: OpenAIEmbedder | None = None
         self._graphiti_instances: dict[str, Graphiti] = {}
 
     @property
-    def driver(self) -> FalkorDriver:
-        """Lazy-initialize FalkorDB driver."""
+    def driver(self) -> GraphDriver:
+        """Lazy-initialize graph driver based on config."""
         if self._driver is None:
-            self._driver = FalkorDriver(
-                host=self.settings.falkordb_host,
-                port=self.settings.falkordb_port,
-                password=self.settings.falkordb_password or None,
-                database=self.settings.falkordb_database,
-            )
+            self._driver = create_driver(self.settings)
         return self._driver
 
     @property
@@ -51,13 +47,18 @@ class GraphitiClient:
             self._embedder = OpenAIEmbedder(config)
         return self._embedder
 
-    def _get_driver(self, group_id: str | None = None) -> FalkorDriver:
-        """Get driver for specific group_id (cloned if needed).
+    def _get_driver(self, group_id: str | None = None) -> GraphDriver:
+        """Get driver for specific group_id.
 
         Uses settings.graphiti_group_id as default if no group_id is provided.
+        For FalkorDB: clones driver for separate graph.
+        For Neo4j/Kuzu: uses with_database (group_id is a property, not separate DB).
         """
         effective_group_id = group_id or self.settings.graphiti_group_id
-        return self.driver.clone(effective_group_id)  # type: ignore[return-value]
+        # Use clone() for FalkorDB (separate graphs), with_database() for others
+        if hasattr(self.driver, 'clone'):
+            return self.driver.clone(effective_group_id)
+        return self.driver.with_database(effective_group_id)
 
     def _get_graphiti(self, group_id: str | None = None) -> Graphiti:
         """Get Graphiti instance for specific group_id (cached)."""
