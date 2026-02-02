@@ -42,8 +42,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install uv for fast package management
 RUN pip install --no-cache-dir uv
 
-# Copy graphiti-milofax (local fork) for graphiti_core
-COPY graphiti-milofax /app/graphiti-milofax
+# Copy ONLY necessary parts of graphiti-milofax (not tests, docs, etc.)
+COPY graphiti-milofax/graphiti_core /app/graphiti-milofax/graphiti_core
+COPY graphiti-milofax/pyproject.toml graphiti-milofax/README.md /app/graphiti-milofax/
 
 # Copy project files
 COPY graphiti-ui/pyproject.toml graphiti-ui/README.md ./
@@ -51,14 +52,15 @@ COPY graphiti-ui/src/ ./src/
 
 # Install dependencies (graphiti-core from local path, then UI)
 RUN uv pip install --system --no-cache /app/graphiti-milofax[falkordb] && \
-    uv pip install --system --no-cache .
+    uv pip install --system --no-cache . && \
+    rm -rf /app/graphiti-milofax
 
 # Copy built frontend from builder stage
 COPY --from=frontend-builder /app/frontend/dist /app/frontend/dist
 
-# Create non-root user
+# Create non-root user (chown only necessary dirs, not huge source trees)
 RUN useradd --create-home --shell /bin/bash appuser && \
-    chown -R appuser:appuser /app
+    chown -R appuser:appuser /app/src /app/frontend
 USER appuser
 
 # Environment

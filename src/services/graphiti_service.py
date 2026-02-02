@@ -552,11 +552,15 @@ class GraphitiClient:
     # =========================================================================
 
     async def delete_graph(self, group_id: str) -> dict:
-        """Delete an entire graph (group) using Graphiti's DB-neutral method."""
+        """Delete an entire graph (group) using Graphiti's delete_group.
+
+        The FalkorDriver.clone() now uses _skip_index_init=True to prevent
+        auto-creation of graphs when getting a cloned driver.
+        """
         try:
             graphiti = self._get_graphiti(group_id)
             await graphiti.delete_group(group_id)
-            # Clear cached instance
+            # Clear cached graphiti instance
             self._graphiti_instances.pop(group_id, None)
             return {"success": True, "deleted": group_id}
         except Exception as e:
