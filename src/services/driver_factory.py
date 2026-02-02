@@ -56,8 +56,19 @@ def create_driver(settings: Settings) -> "GraphDriver":
         logger.info(f"Creating KuzuDriver: {settings.kuzu_db_path}")
         return KuzuDriver(db=settings.kuzu_db_path)
 
+    elif provider == "neptune":
+        from graphiti_core.driver.neptune_driver import NeptuneDriver
+
+        logger.info(f"Creating NeptuneDriver: {settings.neptune_host}")
+        return NeptuneDriver(
+            host=settings.neptune_host,
+            port=settings.neptune_port,
+            aoss_host=settings.neptune_aoss_host,
+            aoss_port=settings.neptune_aoss_port,
+        )
+
     else:
         raise ValueError(
             f"Unsupported graph_provider: {provider}. "
-            f"Supported: falkordb, neo4j, kuzu"
+            f"Supported: falkordb, neo4j, kuzu, neptune"
         )

@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     graphiti_mcp_container: str = "graphiti-mcp"  # Container name for restart
 
     # Graph Database Configuration
-    graph_provider: str = "falkordb"  # falkordb, neo4j, kuzu
+    graph_provider: str = "falkordb"  # falkordb, neo4j, kuzu, neptune
 
     # FalkorDB Connection
     falkordb_host: str = "falkordb"
@@ -42,6 +42,13 @@ class Settings(BaseSettings):
 
     # Kuzu Connection (if graph_provider=kuzu)
     kuzu_db_path: str = ":memory:"
+
+    # Neptune Connection (if graph_provider=neptune)
+    # host format: neptune-db://<endpoint> or neptune-graph://<graphid>
+    neptune_host: str = ""
+    neptune_port: int = 8182
+    neptune_aoss_host: str = ""  # OpenSearch Serverless host (required)
+    neptune_aoss_port: int = 443
 
     # Graphiti Settings
     graphiti_group_id: str = "main"  # Default group_id for graph operations
