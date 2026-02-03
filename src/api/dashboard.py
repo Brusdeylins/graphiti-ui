@@ -192,7 +192,7 @@ async def get_service_status(current_user: CurrentUser) -> dict:
         embedder_config["model"],
     )
 
-    # Check queue status directly from Redis
+    # Check queue status via MCP
     queue_status = {"total_pending": 0, "currently_processing": 0, "error": None}
     try:
         queue_service = get_queue_service()

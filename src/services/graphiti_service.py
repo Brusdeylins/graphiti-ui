@@ -686,7 +686,7 @@ class GraphitiClient:
         )
 
     # =========================================================================
-    # Queue Status (direct Redis access)
+    # Queue Status (via MCP)
     # =========================================================================
 
     async def get_queue_status(self) -> dict:
