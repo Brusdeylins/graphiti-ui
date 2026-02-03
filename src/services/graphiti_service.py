@@ -204,19 +204,17 @@ class GraphitiClient:
         return result
 
     async def get_group_ids(self) -> dict:
-        """Get all available group IDs from MCP server.
+        """Get all available group IDs using Graphiti (DB-neutral).
 
-        Delegates to MCP's /groups endpoint which handles the database-specific
-        logic for listing groups (FalkorDB vs Neo4j).
+        Uses graphiti.get_groups() which delegates to driver.list_groups().
+        All 4 drivers (FalkorDB, Neo4j, Kuzu, Neptune) implement this.
         """
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(f"{self.settings.graphiti_mcp_url}/groups")
-                response.raise_for_status()
-                data = response.json()
-                return {"success": True, "group_ids": data.get("groups", [])}
+            graphiti = self._get_graphiti()
+            groups = await graphiti.get_groups()
+            return {"success": True, "group_ids": groups}
         except Exception as e:
-            logger.exception("Error getting group IDs from MCP")
+            logger.exception("Error getting group IDs")
             return {"success": False, "group_ids": [], "error": str(e)}
 
     async def get_graph_stats(self, group_id: str | None = None) -> dict:
