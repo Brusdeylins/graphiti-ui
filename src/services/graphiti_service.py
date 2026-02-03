@@ -83,14 +83,6 @@ class GraphitiClient:
         except Exception as e:
             return {"healthy": False, "error": str(e)}
 
-    async def get_status(self) -> dict:
-        """Get server status including graph statistics."""
-        try:
-            stats = await self.get_graph_stats()
-            return {"success": True, "data": stats}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
     # =========================================================================
     # Graph Data (for visualization)
     # =========================================================================
