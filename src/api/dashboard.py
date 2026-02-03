@@ -10,6 +10,7 @@ import httpx
 from ..auth.dependencies import CurrentUser
 from ..config import get_settings
 from ..services.config_service import read_config
+from ..services.graphiti_service import get_graphiti_client
 
 router = APIRouter()
 
@@ -74,22 +75,28 @@ def get_embedder_config(config: dict[str, Any]) -> dict[str, str]:
 
 @router.get("/stats")
 async def get_dashboard_stats(current_user: CurrentUser) -> dict:
-    """Get dashboard statistics from MCP server."""
-    settings = get_settings()
-
+    """Get dashboard statistics using Graphiti (DB-neutral)."""
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(f"{settings.graphiti_mcp_url}/stats")
-            response.raise_for_status()
-            data = response.json()
+        client = get_graphiti_client()
+        result = await client.get_graph_stats()
+
+        if result.get("success"):
+            stats = result.get("stats", {})
             return {
-                "episodes_count": data.get("episodes", 0),
-                "entities_count": data.get("nodes", 0),
-                "relationships_count": data.get("edges", 0),
+                "episodes_count": stats.get("episodes", 0),
+                "entities_count": stats.get("nodes", 0),
+                "relationships_count": stats.get("edges", 0),
                 "last_activity": None,  # TODO: Track last activity time
             }
+        else:
+            return {
+                "episodes_count": 0,
+                "entities_count": 0,
+                "relationships_count": 0,
+                "last_activity": None,
+                "error": result.get("error"),
+            }
     except Exception as e:
-        # Fall back to zeros on error
         return {
             "episodes_count": 0,
             "entities_count": 0,
