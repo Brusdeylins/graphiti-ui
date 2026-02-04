@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { api } from '../api/client';
 import { useTheme } from '../contexts/ThemeContext';
 import { ForceGraphVisualization, type GraphNode, type GraphEdge } from '../components/ForceGraphVisualization';
-import { IconRefresh, IconTrash, IconPlus, IconEdit, IconX, IconCheck, IconTrashX, IconAdjustments, IconAlertTriangle, IconBrain, IconLink, IconLoader2 } from '@tabler/icons-react';
+import { IconRefresh, IconTrash, IconPlus, IconEdit, IconX, IconCheck, IconTrashX, IconAdjustments, IconAlertTriangle, IconBrain, IconLink, IconLoader2, IconHistory } from '@tabler/icons-react';
 
 // CSS for spinning animation and input-group button styling
 const visualizationStyles = `
@@ -146,6 +146,11 @@ export function VisualizationPage() {
   const [selectedEdge, setSelectedEdge] = useState<Edge | null>(null);
   const [highlightedNodes, setHighlightedNodes] = useState<Set<string>>(new Set());
   const [highlightedEdges, setHighlightedEdges] = useState<Set<number>>(new Set());
+  const [showExpired, setShowExpired] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    const saved = localStorage.getItem('graphiti-show-expired');
+    return saved === 'true';
+  });
   const [limit, setLimit] = useState(() => {
     if (typeof window === 'undefined') return 2000;
     const saved = localStorage.getItem('graphiti-limit');
@@ -199,13 +204,13 @@ export function VisualizationPage() {
     localStorage.setItem('graphiti-limit', String(limit));
   }, [limit]);
 
-  // Auto-refresh queue status every 2 seconds
+  // Auto-refresh queue status every 2 seconds (lightweight endpoint)
   useEffect(() => {
     const fetchQueueStatus = async () => {
       try {
-        const res = await api.get('/dashboard/status').catch(() => null);
-        if (res?.data?.queue) {
-          const newStatus = res.data.queue as QueueStatus;
+        const res = await api.get('/dashboard/queue').catch(() => null);
+        if (res?.data) {
+          const newStatus = res.data as QueueStatus;
           const wasProcessing = prevProcessingRef.current > 0;
           const isNowIdle = newStatus.currently_processing === 0;
 
@@ -310,27 +315,30 @@ export function VisualizationPage() {
     // Build set of valid node IDs for edge filtering
     const nodeIds = new Set(graphData.nodes.map(n => n.id));
 
-    // Filter edges: only include those with valid source and target
+    // Filter edges: only include those with valid source and target, and optionally filter expired
     const validEdges = graphData.edges.filter(e => {
       const src = typeof e.source === 'string' ? e.source : e.source?.id;
       const tgt = typeof e.target === 'string' ? e.target : e.target?.id;
-      return src && tgt && nodeIds.has(src) && nodeIds.has(tgt);
+      if (!src || !tgt || !nodeIds.has(src) || !nodeIds.has(tgt)) return false;
+      // Filter expired edges unless showExpired is enabled
+      if (!showExpired && e.expired_at) return false;
+      return true;
     });
 
     return {
       nodes: graphData.nodes as GraphNode[],
       links: validEdges.map((e, i) => ({ ...e, index: i })) as GraphEdge[],
     };
-  }, [graphData]);
+  }, [graphData, showExpired]);
 
-  // Update processedEdgesRef when graphData changes (used for sidebar connections)
+  // Update processedEdgesRef when forceGraphData changes (uses filtered edges with correct indices)
   useEffect(() => {
-    if (graphData) {
-      processedEdgesRef.current = graphData.edges.map((e, i) => ({ ...e, originalIndex: i }));
+    if (forceGraphData) {
+      processedEdgesRef.current = forceGraphData.links.map((e) => ({ ...e, originalIndex: e.index })) as Edge[];
     } else {
       processedEdgesRef.current = [];
     }
-  }, [graphData]);
+  }, [forceGraphData]);
 
   const handleCreateGraph = () => {
     const trimmedId = newGraphId.trim();
@@ -1310,8 +1318,8 @@ export function VisualizationPage() {
                     {graphData.nodes.length} Nodes
                   </span>
                   {' • '}
-                  <span className={graphData.edges.length >= limit * 2 ? 'text-danger fw-bold' : ''}>
-                    {graphData.edges.length} Edges
+                  <span className={forceGraphData && forceGraphData.links.length >= limit * 2 ? 'text-danger fw-bold' : ''}>
+                    {forceGraphData?.links.length ?? 0}{!showExpired && graphData.edges.length !== forceGraphData?.links.length ? ` / ${graphData.edges.length}` : ''} Edges
                   </span>
                   {graphData.stats?.episode_count != null && graphData.stats.episode_count > 0 && (
                     <>
@@ -1323,6 +1331,18 @@ export function VisualizationPage() {
                   )}
                 </span>
               )}
+              <button
+                onClick={() => {
+                  const newValue = !showExpired;
+                  setShowExpired(newValue);
+                  localStorage.setItem('graphiti-show-expired', String(newValue));
+                }}
+                className={`btn btn-sm ${showExpired ? 'btn-warning' : 'btn-outline-secondary'}`}
+                title={showExpired ? 'Showing expired facts - click to hide' : 'Expired facts hidden - click to show'}
+              >
+                <IconHistory size={14} className="me-1" />
+                {showExpired ? 'Expired' : 'Expired'}
+              </button>
               {(queueStatus?.currently_processing ?? 0) > 0 && (
                 <IconLoader2 size={16} className="text-warning spin" title="Processing queue active" />
               )}
@@ -1419,7 +1439,7 @@ export function VisualizationPage() {
         {forceGraphData && (
           <ForceGraphVisualization
             graphData={forceGraphData}
-            onNodeClick={(node) => handleNodeClick(node as Node, graphData!.edges)}
+            onNodeClick={(node) => handleNodeClick(node as Node, forceGraphData.links as Edge[])}
             onEdgeClick={(edge) => handleEdgeClick(edge as Edge, edge.index || 0)}
             onBackgroundClick={clearSelection}
             hasSelectedNode={selectedNode !== null && !!selectedGroup}
@@ -1434,7 +1454,7 @@ export function VisualizationPage() {
                 }
               } else {
                 // No node/group selected - treat as normal click to select
-                handleNodeClick(target as Node, graphData!.edges);
+                handleNodeClick(target as Node, forceGraphData.links as Edge[]);
               }
             }}
             highlightedNodes={highlightedNodes}
