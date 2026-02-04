@@ -64,6 +64,70 @@ class EmbedderStatusResponse(BaseModel):
 
 
 # ============================================
+# Helper Functions
+# ============================================
+
+
+async def _check_model_availability(
+    api_url: str, api_key: str, model: str
+) -> dict[str, Any]:
+    """Check model availability at an API endpoint.
+
+    Returns dict with reachable, model_available, available_models, error.
+    """
+    if not api_url:
+        return {
+            "reachable": False,
+            "model_available": False,
+            "available_models": [],
+            "error": "API URL not configured",
+        }
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            headers = {}
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
+            response = await client.get(f"{api_url}/models", headers=headers)
+            reachable = response.status_code == 200
+            if reachable:
+                data = response.json()
+                models = data.get("data", [])
+                available_models = [m.get("id", "") for m in models]
+                model_available = any(
+                    model == mid or mid.startswith(f"{model}:")
+                    for mid in available_models
+                )
+                error = None if model_available else f"Model '{model}' not found in available models"
+                return {
+                    "reachable": True,
+                    "model_available": model_available,
+                    "available_models": available_models,
+                    "error": error,
+                }
+            return {
+                "reachable": False,
+                "model_available": False,
+                "available_models": [],
+                "error": f"HTTP {response.status_code}",
+            }
+    except httpx.TimeoutException:
+        return {
+            "reachable": False,
+            "model_available": False,
+            "available_models": [],
+            "error": "Connection timeout",
+        }
+    except Exception as e:
+        return {
+            "reachable": False,
+            "model_available": False,
+            "available_models": [],
+            "error": str(e)[:100],
+        }
+
+
+# ============================================
 # LLM Endpoints
 # ============================================
 
@@ -86,46 +150,15 @@ async def get_llm_status(current_user: CurrentUser) -> LLMStatusResponse:
     api_key = creds.get("api_key", "")
     model = creds.get("model", "")
 
-    reachable = False
-    model_available = False
-    available_models: list[str] = []
-    error = None
-
-    if not api_url:
-        error = "API URL not configured"
-    else:
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                headers = {}
-                if api_key:
-                    headers["Authorization"] = f"Bearer {api_key}"
-                response = await client.get(f"{api_url}/models", headers=headers)
-                reachable = response.status_code == 200
-                if reachable:
-                    data = response.json()
-                    models = data.get("data", [])
-                    available_models = [m.get("id", "") for m in models]
-                    # Check if configured model exists (exact or prefix match)
-                    model_available = any(
-                        model == mid or mid.startswith(f"{model}:")
-                        for mid in available_models
-                    )
-                    if not model_available:
-                        error = f"Model '{model}' not found in available models"
-                else:
-                    error = f"HTTP {response.status_code}"
-        except httpx.TimeoutException:
-            error = "Connection timeout"
-        except Exception as e:
-            error = str(e)[:100]
+    status = await _check_model_availability(api_url, api_key, model)
 
     return LLMStatusResponse(
         api_url=api_url,
         model=model,
-        reachable=reachable,
-        model_available=model_available,
-        available_models=available_models,
-        error=error,
+        reachable=status["reachable"],
+        model_available=status["model_available"],
+        available_models=status["available_models"],
+        error=status["error"],
     )
 
 
@@ -154,48 +187,16 @@ async def get_embedder_status(current_user: CurrentUser) -> EmbedderStatusRespon
     model = creds.get("model", "")
     dimensions = creds.get("dimensions", 768)
 
-    reachable = False
-    model_available = False
-    available_models: list[str] = []
-    error = None
-
-    if not api_url:
-        error = "API URL not configured"
-    else:
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                headers = {}
-                if api_key:
-                    headers["Authorization"] = f"Bearer {api_key}"
-                # First check available models
-                response = await client.get(f"{api_url}/models", headers=headers)
-                reachable = response.status_code == 200
-                if reachable:
-                    data = response.json()
-                    models = data.get("data", [])
-                    available_models = [m.get("id", "") for m in models]
-                    # Check if configured model exists (exact or prefix match)
-                    model_available = any(
-                        model == mid or mid.startswith(f"{model}:")
-                        for mid in available_models
-                    )
-                    if not model_available:
-                        error = f"Model '{model}' not found in available models"
-                else:
-                    error = f"HTTP {response.status_code}"
-        except httpx.TimeoutException:
-            error = "Connection timeout"
-        except Exception as e:
-            error = str(e)[:100]
+    status = await _check_model_availability(api_url, api_key, model)
 
     return EmbedderStatusResponse(
         api_url=api_url,
         model=model,
         dimensions=dimensions,
-        reachable=reachable,
-        model_available=model_available,
-        available_models=available_models,
-        error=error,
+        reachable=status["reachable"],
+        model_available=status["model_available"],
+        available_models=status["available_models"],
+        error=status["error"],
     )
 
 

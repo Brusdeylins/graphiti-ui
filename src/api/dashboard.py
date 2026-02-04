@@ -33,13 +33,13 @@ def expand_env_vars(value: str) -> str:
     return re.sub(pattern, replacer, value)
 
 
-def get_llm_config(config: dict[str, Any]) -> dict[str, str]:
-    """Extract and expand LLM configuration."""
-    llm = config.get("llm", {})
-    provider = llm.get("provider", "openai")
-    model = expand_env_vars(llm.get("model", ""))
+def _get_provider_config(config: dict[str, Any], section: str) -> dict[str, str]:
+    """Extract and expand provider configuration for a given section (llm or embedder)."""
+    section_config = config.get(section, {})
+    provider = section_config.get("provider", "openai")
+    model = expand_env_vars(section_config.get("model", ""))
 
-    providers = llm.get("providers", {})
+    providers = section_config.get("providers", {})
     provider_config = providers.get(provider, {})
 
     api_url = expand_env_vars(provider_config.get("api_url", ""))
@@ -51,26 +51,16 @@ def get_llm_config(config: dict[str, Any]) -> dict[str, str]:
         "api_url": api_url,
         "api_key": api_key,
     }
+
+
+def get_llm_config(config: dict[str, Any]) -> dict[str, str]:
+    """Extract and expand LLM configuration."""
+    return _get_provider_config(config, "llm")
 
 
 def get_embedder_config(config: dict[str, Any]) -> dict[str, str]:
     """Extract and expand embedder configuration."""
-    embedder = config.get("embedder", {})
-    provider = embedder.get("provider", "openai")
-    model = expand_env_vars(embedder.get("model", ""))
-
-    providers = embedder.get("providers", {})
-    provider_config = providers.get(provider, {})
-
-    api_url = expand_env_vars(provider_config.get("api_url", ""))
-    api_key = expand_env_vars(provider_config.get("api_key", ""))
-
-    return {
-        "provider": provider,
-        "model": model,
-        "api_url": api_url,
-        "api_key": api_key,
-    }
+    return _get_provider_config(config, "embedder")
 
 
 @router.get("/stats")
@@ -165,6 +155,26 @@ async def check_model_availability(
         return {"status": "error", "error": str(e)}
 
 
+@router.get("/queue")
+async def get_queue_status(current_user: CurrentUser) -> dict:
+    """Get queue status only (lightweight, for frequent polling)."""
+    from ..services.queue_service import get_queue_service
+
+    try:
+        queue_service = get_queue_service()
+        status = await queue_service.get_status()
+        return {
+            "total_pending": status.get("pending_count", 0),
+            "currently_processing": 1 if status.get("processing", False) else 0,
+        }
+    except Exception as e:
+        return {
+            "total_pending": 0,
+            "currently_processing": 0,
+            "error": str(e),
+        }
+
+
 @router.get("/status")
 async def get_service_status(current_user: CurrentUser) -> dict:
     """Get status of all services."""
@@ -173,7 +183,6 @@ async def get_service_status(current_user: CurrentUser) -> dict:
 
     # Check graph database via driver's health_check (DB-neutral)
     from ..services.queue_service import get_queue_service
-    from ..services.graphiti_service import get_graphiti_client
 
     graphiti_status = "unknown"
     try:

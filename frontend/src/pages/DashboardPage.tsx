@@ -61,15 +61,16 @@ export function DashboardPage() {
   useEffect(() => {
     const fetchStatus = async () => {
       try {
-        const [llmRes, embedderRes, statusRes] = await Promise.all([
+        const [llmRes, embedderRes, statusRes, queueRes] = await Promise.all([
           api.get('/config/llm/status').catch(() => ({ data: { api_url: '', model: '', reachable: false, error: 'Failed to fetch' } })),
           api.get('/config/embedder/status').catch(() => ({ data: { api_url: '', model: '', dimensions: 768, reachable: false, error: 'Failed to fetch' } })),
           api.get('/dashboard/status').catch(() => ({ data: { falkordb: { browser_url: '' } } })),
+          api.get('/dashboard/queue').catch(() => ({ data: { total_pending: 0, currently_processing: 0 } })),
         ]);
         setLlmStatus(llmRes.data);
         setEmbedderStatus(embedderRes.data);
-        setFalkordbBrowserUrl(statusRes.data?.falkordb?.browser_url || '');
-        setQueueStatus(statusRes.data?.queue || null);
+        setFalkordbBrowserUrl(statusRes.data?.graph_database?.browser_url || '');
+        setQueueStatus(queueRes.data);
       } catch (error) {
         console.error('Failed to fetch status:', error);
       } finally {
@@ -79,13 +80,13 @@ export function DashboardPage() {
     fetchStatus();
   }, []);
 
-  // Auto-refresh queue status every 2 seconds
+  // Auto-refresh queue status every 2 seconds (lightweight, no model checks)
   useEffect(() => {
     const fetchQueueStatus = async () => {
       try {
-        const res = await api.get('/dashboard/status').catch(() => null);
-        if (res?.data?.queue) {
-          setQueueStatus(res.data.queue);
+        const res = await api.get('/dashboard/queue').catch(() => null);
+        if (res?.data) {
+          setQueueStatus(res.data);
         }
       } catch {
         // Silently ignore polling errors
@@ -93,6 +94,25 @@ export function DashboardPage() {
     };
 
     const interval = setInterval(fetchQueueStatus, 2000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Auto-refresh health status every 60 seconds
+  useEffect(() => {
+    const fetchHealthStatus = async () => {
+      try {
+        const [llmRes, embedderRes] = await Promise.all([
+          api.get('/config/llm/status').catch(() => null),
+          api.get('/config/embedder/status').catch(() => null),
+        ]);
+        if (llmRes?.data) setLlmStatus(llmRes.data);
+        if (embedderRes?.data) setEmbedderStatus(embedderRes.data);
+      } catch {
+        // Silently ignore polling errors
+      }
+    };
+
+    const interval = setInterval(fetchHealthStatus, 60000);
     return () => clearInterval(interval);
   }, []);
 

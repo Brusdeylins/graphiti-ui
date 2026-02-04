@@ -28,12 +28,6 @@ class FactSearchRequest(BaseModel):
     limit: int = 10
 
 
-class CypherQueryRequest(BaseModel):
-    """Raw Cypher query request."""
-
-    query: str
-
-
 @router.post("/nodes")
 async def search_nodes(request: NodeSearchRequest, current_user: CurrentUser) -> dict:
     """Search for nodes in the knowledge graph."""
@@ -120,7 +114,6 @@ class QueryRequest(BaseModel):
 
 
 @router.post("")
-@router.post("/")
 async def execute_query(request: QueryRequest, current_user: CurrentUser) -> dict:
     """Execute Cypher query via MCP server.
 
@@ -204,9 +197,3 @@ async def get_available_graphs(current_user: CurrentUser) -> dict:
         return {"graphs": [], "success": False, "error": result.get("error")}
     except Exception as e:
         return {"graphs": [], "success": False, "error": str(e)}
-
-
-@router.post("/cypher")
-async def execute_cypher(request: CypherQueryRequest, current_user: CurrentUser) -> dict:
-    """Execute raw Cypher query (alias for /)."""
-    return await execute_query(QueryRequest(query=request.query), current_user)
