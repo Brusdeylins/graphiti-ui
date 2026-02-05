@@ -338,7 +338,7 @@ class GraphitiClient:
         """Delete an entity node using Graphiti class."""
         try:
             graphiti = self._get_graphiti(group_id)
-            await graphiti.delete_entity(uuid)
+            await graphiti.remove_entity(uuid)
             return {"success": True, "deleted": uuid}
         except NodeNotFoundError:
             return {"success": False, "error": f"Node {uuid} not found"}
@@ -436,7 +436,7 @@ class GraphitiClient:
         """Delete an entity edge using Graphiti class."""
         try:
             graphiti = self._get_graphiti(group_id)
-            await graphiti.delete_edge(uuid)
+            await graphiti.remove_edge(uuid)
             return {"success": True, "deleted": uuid}
         except EdgeNotFoundError:
             return {"success": False, "error": f"Edge {uuid} not found"}
@@ -530,14 +530,14 @@ class GraphitiClient:
     # =========================================================================
 
     async def delete_graph(self, group_id: str) -> dict:
-        """Delete an entire graph (group) using Graphiti's delete_group.
+        """Delete an entire graph (group) using Graphiti's remove_group.
 
         The FalkorDriver.clone() now uses _skip_index_init=True to prevent
         auto-creation of graphs when getting a cloned driver.
         """
         try:
             graphiti = self._get_graphiti(group_id)
-            await graphiti.delete_group(group_id)
+            await graphiti.remove_group(group_id)
             # Clear cached graphiti instance
             self._graphiti_instances.pop(group_id, None)
             return {"success": True, "deleted": group_id}
