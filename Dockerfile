@@ -47,15 +47,17 @@ COPY pyproject.toml README.md ./
 COPY src/ ./src/
 
 # Install graphiti-core from GitHub fork, then UI dependencies
-RUN uv pip install --system --no-cache "graphiti-core[falkordb] @ git+https://github.com/Brusdeylins/graphiti.git@main" && \
+RUN uv pip install --system --no-cache "graphiti-core[falkordb] @ git+https://github.com/Milofax/graphiti.git@main" && \
     uv pip install --system --no-cache .
 
 # Copy built frontend from builder stage
 COPY --from=frontend-builder /app/frontend/dist /app/frontend/dist
 
 # Create non-root user (chown only necessary dirs, not huge source trees)
+# /app/data is the writable volume for credentials.yaml, .secret_key etc.
 RUN useradd --create-home --shell /bin/bash appuser && \
-    chown -R appuser:appuser /app/src /app/frontend
+    mkdir -p /app/data && \
+    chown -R appuser:appuser /app/src /app/frontend /app/data
 USER appuser
 
 # Environment
