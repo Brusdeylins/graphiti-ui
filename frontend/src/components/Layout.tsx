@@ -1,3 +1,8 @@
+/* Graphiti UI — Admin interface for Graphiti Knowledge Graph
+ * Copyright (c) 2026 Matthias Brusdeylins
+ * SPDX-License-Identifier: MIT
+ * 100% AI-generated code (vibe-coding with Claude) */
+
 import { Outlet, Navigate, NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useTheme } from '../contexts/ThemeContext';
@@ -56,12 +61,12 @@ export function Layout() {
         <div className="container-fluid">
           {/* Brand */}
           <h1 className="navbar-brand navbar-brand-autodark mb-0">
-            <a href="/" className="d-flex align-items-center">
-              <IconBrandGraphql size={36} className="icon-lg me-2" strokeWidth={1.5} />
-              <div className="d-flex flex-column">
+            <a href="/" className="d-flex flex-column align-items-center">
+              <div className="d-flex align-items-center">
+                <IconBrandGraphql size={36} className="icon-lg me-2" strokeWidth={1.5} />
                 <span className="navbar-brand-text" style={{ fontSize: '1.25rem', fontWeight: 600 }}>Graphiti</span>
-                <span className="text-muted" style={{ fontSize: '0.65rem', marginTop: '-4px' }}>v1.2</span>
               </div>
+              <span className="text-muted" style={{ fontSize: '0.65rem', marginTop: '-2px' }}>v1.2</span>
             </a>
           </h1>
 

@@ -1,3 +1,8 @@
+/* Graphiti UI — Admin interface for Graphiti Knowledge Graph
+ * Copyright (c) 2026 Matthias Brusdeylins
+ * SPDX-License-Identifier: MIT
+ * 100% AI-generated code (vibe-coding with Claude) */
+
 import { useRef, useState, useCallback, useEffect, useMemo } from 'react';
 import ForceGraph2D from 'react-force-graph-2d';
 import ForceGraph3D from 'react-force-graph-3d';

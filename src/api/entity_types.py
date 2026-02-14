@@ -1,3 +1,8 @@
+# Graphiti UI — Admin interface for Graphiti Knowledge Graph
+# Copyright (c) 2026 Matthias Brusdeylins
+# SPDX-License-Identifier: MIT
+# 100% AI-generated code (vibe-coding with Claude)
+
 """Entity Types API routes - proxies to MCP server."""
 
 from fastapi import APIRouter, HTTPException

@@ -1,3 +1,8 @@
+# Graphiti UI — Admin interface for Graphiti Knowledge Graph
+# Copyright (c) 2026 Matthias Brusdeylins
+# SPDX-License-Identifier: MIT
+# 100% AI-generated code (vibe-coding with Claude)
+
 """Graphiti service with Graphiti class CRUD integration.
 
 Uses the Graphiti class facade for CRUD operations with auto-embedding generation.

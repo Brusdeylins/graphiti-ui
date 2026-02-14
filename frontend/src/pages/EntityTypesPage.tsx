@@ -1,3 +1,8 @@
+/* Graphiti UI — Admin interface for Graphiti Knowledge Graph
+ * Copyright (c) 2026 Matthias Brusdeylins
+ * SPDX-License-Identifier: MIT
+ * 100% AI-generated code (vibe-coding with Claude) */
+
 import { useState, useEffect } from 'react';
 import { api } from '../api/client';
 import { IconCategory, IconInfoCircle, IconChevronDown, IconChevronRight, IconPlus, IconEdit, IconTrash, IconX, IconCheck, IconRefresh, IconAlertTriangle, IconGripVertical } from '@tabler/icons-react';

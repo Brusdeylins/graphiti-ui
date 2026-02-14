@@ -1,6 +1,6 @@
 # ============================================
 # Graphiti UI - Dockerfile
-# Build context: ./project (parent directory)
+# Build context: graphiti-ui repo root
 # ============================================
 
 # Stage 1: Build React Frontend
@@ -8,14 +8,14 @@ FROM node:20-slim AS frontend-builder
 
 WORKDIR /app/frontend
 
-# Copy frontend package files (relative to ./project context)
-COPY graphiti-ui/frontend/package*.json ./
+# Copy frontend package files
+COPY frontend/package*.json ./
 
 # Install dependencies
 RUN npm ci
 
 # Copy frontend source
-COPY graphiti-ui/frontend/ ./
+COPY frontend/ ./
 
 # Build frontend
 RUN npm run build
@@ -42,18 +42,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install uv for fast package management
 RUN pip install --no-cache-dir uv
 
-# Copy ONLY necessary parts of graphiti-milofax (not tests, docs, etc.)
-COPY graphiti-milofax/graphiti_core /app/graphiti-milofax/graphiti_core
-COPY graphiti-milofax/pyproject.toml graphiti-milofax/README.md /app/graphiti-milofax/
-
 # Copy project files
-COPY graphiti-ui/pyproject.toml graphiti-ui/README.md ./
-COPY graphiti-ui/src/ ./src/
+COPY pyproject.toml README.md ./
+COPY src/ ./src/
 
-# Install dependencies (graphiti-core from local path, then UI)
-RUN uv pip install --system --no-cache /app/graphiti-milofax[falkordb] && \
-    uv pip install --system --no-cache . && \
-    rm -rf /app/graphiti-milofax
+# Install graphiti-core from GitHub fork, then UI dependencies
+RUN uv pip install --system --no-cache "graphiti-core[falkordb] @ git+https://github.com/Brusdeylins/graphiti.git@main" && \
+    uv pip install --system --no-cache .
 
 # Copy built frontend from builder stage
 COPY --from=frontend-builder /app/frontend/dist /app/frontend/dist

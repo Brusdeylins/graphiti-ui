@@ -17,7 +17,7 @@ dependencies = [
     "redis>=5.0.0",
     "python-multipart>=0.0.9",
     "falkordb>=1.0.0",
-    # graphiti-core[falkordb] installed separately in Dockerfile from local path
+    # graphiti-core[falkordb] installed separately in Dockerfile from GitHub
 ]
 
 [project.optional-dependencies]

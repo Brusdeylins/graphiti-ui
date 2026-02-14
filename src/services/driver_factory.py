@@ -1,3 +1,8 @@
+# Graphiti UI — Admin interface for Graphiti Knowledge Graph
+# Copyright (c) 2026 Matthias Brusdeylins
+# SPDX-License-Identifier: MIT
+# 100% AI-generated code (vibe-coding with Claude)
+
 """Driver Factory - creates database-neutral GraphDriver instances.
 
 Reads graph_provider from config and creates the appropriate driver.

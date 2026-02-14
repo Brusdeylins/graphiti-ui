@@ -1,3 +1,8 @@
+/* Graphiti UI — Admin interface for Graphiti Knowledge Graph
+ * Copyright (c) 2026 Matthias Brusdeylins
+ * SPDX-License-Identifier: MIT
+ * 100% AI-generated code (vibe-coding with Claude) */
+
 import { useState, type FormEvent } from 'react';
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';

@@ -1,3 +1,8 @@
+# Graphiti UI — Admin interface for Graphiti Knowledge Graph
+# Copyright (c) 2026 Matthias Brusdeylins
+# SPDX-License-Identifier: MIT
+# 100% AI-generated code (vibe-coding with Claude)
+
 """MCP Proxy endpoint with API key authentication.
 
 Proxies requests to the Graphiti MCP server after validating API keys.
