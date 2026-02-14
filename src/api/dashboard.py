@@ -105,8 +105,12 @@ async def check_model_availability(
     api_url: str,
     api_key: str,
     model_name: str,
+    provider: str = "openai",
 ) -> dict[str, Any]:
     """Check if a model is available at the given API endpoint.
+
+    For OpenAI-compatible APIs (openai, ollama): queries /models to verify the model exists.
+    For Anthropic-compatible APIs: performs a connectivity check since there is no /models endpoint.
 
     Returns dict with status, available models, and error message if any.
     """
@@ -119,6 +123,21 @@ async def check_model_availability(
 
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
+            # Anthropic-compatible APIs don't have a /models endpoint.
+            # Check connectivity by making a request to the base URL.
+            if provider == "anthropic":
+                # Try the base URL — any response (even 4xx) means the API is reachable
+                base_url = api_url.rstrip("/")
+                # Strip /v1 suffix if present for the connectivity check
+                if base_url.endswith("/v1"):
+                    base_url = base_url[:-3]
+                response = await client.get(base_url, headers=headers)
+                return {
+                    "status": "healthy",
+                    "model": model_name,
+                }
+
+            # OpenAI-compatible: query /models endpoint
             response = await client.get(f"{api_url}/models", headers=headers)
 
             if response.status_code != 200:
@@ -203,6 +222,7 @@ async def get_service_status(current_user: CurrentUser) -> dict:
         llm_config["api_url"],
         llm_config["api_key"],
         llm_config["model"],
+        provider=llm_config["provider"],
     )
 
     # Check Embedder
@@ -211,6 +231,7 @@ async def get_service_status(current_user: CurrentUser) -> dict:
         embedder_config["api_url"],
         embedder_config["api_key"],
         embedder_config["model"],
+        provider=embedder_config["provider"],
     )
 
     # Check queue status via MCP
