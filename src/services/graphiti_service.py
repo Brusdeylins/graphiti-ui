@@ -517,7 +517,7 @@ class GraphitiClient:
         """Delete an episode using Graphiti class."""
         try:
             graphiti = self._get_graphiti(group_id)
-            await graphiti.delete_episode(episode_uuid)
+            await graphiti.remove_episode(episode_uuid)
             return {"success": True, "deleted": episode_uuid}
         except NodeNotFoundError:
             return {"success": False, "error": f"Episode {episode_uuid} not found"}

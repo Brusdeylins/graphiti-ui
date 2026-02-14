@@ -55,10 +55,13 @@ export function Layout() {
       <aside className="navbar navbar-vertical navbar-expand-lg" data-bs-theme="dark">
         <div className="container-fluid">
           {/* Brand */}
-          <h1 className="navbar-brand navbar-brand-autodark">
+          <h1 className="navbar-brand navbar-brand-autodark mb-0">
             <a href="/" className="d-flex align-items-center">
               <IconBrandGraphql size={36} className="icon-lg me-2" strokeWidth={1.5} />
-              <span className="navbar-brand-text" style={{ fontSize: '1.25rem', fontWeight: 600 }}>Graphiti</span>
+              <div className="d-flex flex-column">
+                <span className="navbar-brand-text" style={{ fontSize: '1.25rem', fontWeight: 600 }}>Graphiti</span>
+                <span className="text-muted" style={{ fontSize: '0.65rem', marginTop: '-4px' }}>v1.2</span>
+              </div>
             </a>
           </h1>
 

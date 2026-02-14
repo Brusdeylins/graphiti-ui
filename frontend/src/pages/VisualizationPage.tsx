@@ -1370,8 +1370,8 @@ export function VisualizationPage() {
                   <IconLink size={16} className="me-1" />
                   Edge
                 </button>
-                <span className="text-muted small" title="Hold Shift and drag from one node to another">
-                  <kbd>Shift</kbd>+Drag
+                <span className="text-muted small" title="Hold Shift and click a target node to create an edge">
+                  <kbd>Shift</kbd>+Click
                 </span>
                 <span className="border-start mx-2" style={{ height: '20px' }}></span>
                 <button
