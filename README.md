@@ -4,6 +4,8 @@ Admin interface for the [Graphiti](https://github.com/getzep/graphiti) knowledge
 
 This project is 100% AI-generated code (vibe-coding with [Claude](https://claude.ai)).
 
+> **Important:** This UI requires [Brusdeylins/graphiti](https://github.com/Brusdeylins/graphiti) (fork), **not** the upstream [getzep/graphiti](https://github.com/getzep/graphiti). The fork adds CRUD operations, extended MCP tools, and FalkorDB multi-graph fixes that this UI depends on. The upstream repo does not provide these APIs.
+
 ![Graphiti UI — Graph Visualization](gfx/screenshot.png)
 
 ## Features
