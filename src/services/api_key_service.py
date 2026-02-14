@@ -10,7 +10,6 @@ Stores API keys in a JSON file for MCP endpoint authentication.
 
 import json
 import secrets
-import hashlib
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -43,11 +42,6 @@ def _save_api_keys(data: dict[str, Any]) -> None:
         json.dump(data, f, indent=2)
 
 
-def _hash_key(key: str) -> str:
-    """Hash an API key for storage comparison."""
-    return hashlib.sha256(key.encode()).hexdigest()
-
-
 def generate_api_key() -> str:
     """Generate a new API key."""
     return f"gk_{secrets.token_urlsafe(32)}"
@@ -65,13 +59,11 @@ def create_api_key(name: str) -> dict[str, Any]:
     data = _load_api_keys()
 
     key = generate_api_key()
-    key_hash = _hash_key(key)
 
     key_entry = {
         "name": name,
-        "key_hash": key_hash,
-        "key_prefix": key[:12],  # Store prefix for display
-        "full_key": key,  # Store full key for copy functionality
+        "key_prefix": key[:12],
+        "full_key": key,
         "created_at": datetime.utcnow().isoformat(),
         "last_used": None,
     }
@@ -141,10 +133,9 @@ def validate_api_key(key: str) -> bool:
         return False
 
     data = _load_api_keys()
-    key_hash = _hash_key(key)
 
     for k in data["keys"]:
-        if k["key_hash"] == key_hash:
+        if k.get("full_key") == key:
             # Update last_used timestamp
             k["last_used"] = datetime.utcnow().isoformat()
             _save_api_keys(data)
