@@ -73,10 +73,55 @@ class EmbedderStatusResponse(BaseModel):
 # ============================================
 
 
+def _get_provider_config(section: str) -> dict[str, str]:
+    """Get provider config from config.yaml, falling back to env vars.
+
+    Reads config.yaml first (which has the actual provider settings like
+    anthropic API URLs). Falls back to env-var-based credentials if
+    config.yaml doesn't have the section.
+    """
+    config = read_config()
+    section_config = config.get(section, {})
+
+    if section_config and "providers" in section_config:
+        from .dashboard import expand_env_vars
+
+        provider = section_config.get("provider", "openai")
+        model = expand_env_vars(section_config.get("model", ""))
+        provider_config = section_config.get("providers", {}).get(provider, {})
+        api_url = expand_env_vars(provider_config.get("api_url", ""))
+        api_key = expand_env_vars(provider_config.get("api_key", ""))
+
+        result = {"provider": provider, "model": model, "api_url": api_url, "api_key": api_key}
+
+        # For embedder, also get dimensions
+        if section == "embedder":
+            result["dimensions"] = section_config.get("dimensions", 768)
+
+        return result
+
+    # Fallback to env vars
+    if section == "llm":
+        creds = get_llm_credentials()
+    else:
+        creds = get_embedder_credentials()
+
+    return {
+        "provider": "openai",
+        "model": creds.get("model", ""),
+        "api_url": creds.get("api_url", ""),
+        "api_key": creds.get("api_key", ""),
+        "dimensions": creds.get("dimensions", 768),
+    }
+
+
 async def _check_model_availability(
-    api_url: str, api_key: str, model: str
+    api_url: str, api_key: str, model: str, provider: str = "openai"
 ) -> dict[str, Any]:
     """Check model availability at an API endpoint.
+
+    For OpenAI-compatible APIs: queries /models to verify the model exists.
+    For Anthropic-compatible APIs: performs a connectivity check (no /models endpoint).
 
     Returns dict with reachable, model_available, available_models, error.
     """
@@ -93,6 +138,22 @@ async def _check_model_availability(
             headers = {}
             if api_key:
                 headers["Authorization"] = f"Bearer {api_key}"
+
+            # Anthropic-compatible APIs don't have a /models endpoint
+            if provider == "anthropic":
+                base_url = api_url.rstrip("/")
+                if base_url.endswith("/v1"):
+                    base_url = base_url[:-3]
+                response = await client.get(base_url, headers=headers)
+                # Any response (even 4xx) means the API is reachable
+                return {
+                    "reachable": True,
+                    "model_available": True,
+                    "available_models": [model],
+                    "error": None,
+                }
+
+            # OpenAI-compatible: query /models endpoint
             response = await client.get(f"{api_url}/models", headers=headers)
             reachable = response.status_code == 200
             if reachable:
@@ -149,17 +210,19 @@ async def get_llm_config(current_user: CurrentUser) -> LLMConfigResponse:
 
 @router.get("/llm/status", response_model=LLMStatusResponse)
 async def get_llm_status(current_user: CurrentUser) -> LLMStatusResponse:
-    """Get LLM configuration with connectivity and model availability status."""
-    creds = get_llm_credentials()
-    api_url = creds.get("api_url", "")
-    api_key = creds.get("api_key", "")
-    model = creds.get("model", "")
+    """Get LLM configuration with connectivity and model availability status.
 
-    status = await _check_model_availability(api_url, api_key, model)
+    Reads from config.yaml (preferred) or falls back to environment variables.
+    """
+    cfg = _get_provider_config("llm")
+
+    status = await _check_model_availability(
+        cfg["api_url"], cfg["api_key"], cfg["model"], provider=cfg["provider"]
+    )
 
     return LLMStatusResponse(
-        api_url=api_url,
-        model=model,
+        api_url=cfg["api_url"],
+        model=cfg["model"],
         reachable=status["reachable"],
         model_available=status["model_available"],
         available_models=status["available_models"],
@@ -185,19 +248,20 @@ async def get_embedder_config(current_user: CurrentUser) -> EmbedderConfigRespon
 
 @router.get("/embedder/status", response_model=EmbedderStatusResponse)
 async def get_embedder_status(current_user: CurrentUser) -> EmbedderStatusResponse:
-    """Get Embedder configuration with connectivity and model availability status."""
-    creds = get_embedder_credentials()
-    api_url = creds.get("api_url", "")
-    api_key = creds.get("api_key", "")
-    model = creds.get("model", "")
-    dimensions = creds.get("dimensions", 768)
+    """Get Embedder configuration with connectivity and model availability status.
 
-    status = await _check_model_availability(api_url, api_key, model)
+    Reads from config.yaml (preferred) or falls back to environment variables.
+    """
+    cfg = _get_provider_config("embedder")
+
+    status = await _check_model_availability(
+        cfg["api_url"], cfg["api_key"], cfg["model"], provider=cfg["provider"]
+    )
 
     return EmbedderStatusResponse(
-        api_url=api_url,
-        model=model,
-        dimensions=dimensions,
+        api_url=cfg["api_url"],
+        model=cfg["model"],
+        dimensions=cfg.get("dimensions", 768),
         reachable=status["reachable"],
         model_available=status["model_available"],
         available_models=status["available_models"],
